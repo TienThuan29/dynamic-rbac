@@ -14,11 +14,11 @@ services:
     env_file:
       - .env
 
-  apigateway:
+  localgateway:
     build:
-      context: ./ApiGateway
+      context: ./LocalGateway
       dockerfile: Dockerfile
-    container_name: apigateway
+    container_name: localgateway
     ports:
       - "5000:8080"
     environment:
@@ -26,8 +26,6 @@ services:
     depends_on:
       - authmodule
       - mainmodule
-    env_file:
-      - .env
 
   authmodule:
     build:
