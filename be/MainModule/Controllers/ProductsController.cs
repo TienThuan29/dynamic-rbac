@@ -18,6 +18,9 @@ public class ProductsController : ControllerBase
 
     // GET api/products?page=1&pageSize=20&category=electronics&search=phone
     [HttpGet]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = false, AutoGenerateCode = true,
+        PermissionName = "Danh sách sản phẩm",
+        Description = "Lấy danh sách sản phẩm (phân trang, lọc theo category và tìm kiếm)")]
     public async Task<IActionResult> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -31,6 +34,9 @@ public class ProductsController : ControllerBase
 
     // GET api/products/{id}
     [HttpGet("{id:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = false, AutoGenerateCode = true,
+        PermissionName = "Chi tiết sản phẩm",
+        Description = "Lấy thông tin chi tiết của một sản phẩm theo ID")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
     {
         var product = await _productService.GetByIdAsync(id, ct);
@@ -39,6 +45,9 @@ public class ProductsController : ControllerBase
 
     // POST api/products
     [HttpPost]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = false, AutoGenerateCode = true,
+        PermissionName = "Tạo sản phẩm",
+        Description = "Tạo mới một sản phẩm (SKU không được trùng)")]
     public async Task<IActionResult> Create([FromBody] CreateProductDto dto, CancellationToken ct)
     {
         if (await _productService.SkuExistsAsync(dto.SKU, excludeId: null, ct))
@@ -50,6 +59,9 @@ public class ProductsController : ControllerBase
 
     // PUT api/products/{id}
     [HttpPut("{id:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = false, AutoGenerateCode = true,
+        PermissionName = "Cập nhật sản phẩm",
+        Description = "Cập nhật toàn bộ thông tin sản phẩm theo ID")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateProductDto dto, CancellationToken ct)
     {
         if (await _productService.SkuExistsAsync(dto.SKU, excludeId: id, ct))
@@ -61,6 +73,9 @@ public class ProductsController : ControllerBase
 
     // PATCH api/products/{id}/stock
     [HttpPatch("{id:guid}/stock")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = false, AutoGenerateCode = true,
+        PermissionName = "Cập nhật tồn kho",
+        Description = "Cập nhật số lượng tồn kho của sản phẩm theo ID")]
     public async Task<IActionResult> UpdateStock(Guid id, [FromBody] UpdateStockDto dto, CancellationToken ct)
     {
         var updated = await _productService.UpdateStockAsync(id, dto, ct);
@@ -69,6 +84,9 @@ public class ProductsController : ControllerBase
 
     // DELETE api/products/{id}  (soft delete)
     [HttpDelete("{id:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = false, AutoGenerateCode = true,
+        PermissionName = "Xóa sản phẩm",
+        Description = "Xóa mềm một sản phẩm theo ID")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         var deleted = await _productService.DeleteAsync(id, ct);
