@@ -11,8 +11,8 @@ import type {
   UserPermissionDetail,
 } from "@/types/api"
 
-const MAIN_API_BASE_URL = import.meta.env.VITE_MAIN_API_BASE_URL ?? "/main-api"
-const AUTH_API_BASE_URL = import.meta.env.VITE_AUTH_API_BASE_URL ?? "/auth-api"
+const MAIN_API_BASE_URL = import.meta.env.VITE_MAIN_API_BASE_URL ?? "/api"
+const AUTH_API_BASE_URL = import.meta.env.VITE_AUTH_API_BASE_URL ?? "/api"
 
 export class ApiError extends Error {
   status: number
@@ -79,38 +79,38 @@ export function getProducts(query: {
   category?: string
   search?: string
 }) {
-  return request<ProductPagedResult>(MAIN_API_BASE_URL, "/api/products", { query })
+  return request<ProductPagedResult>(MAIN_API_BASE_URL, "/products", { query })
 }
 
 export function createProduct(payload: ProductPayload) {
-  return request<Product>(MAIN_API_BASE_URL, "/api/products", {
+  return request<Product>(MAIN_API_BASE_URL, "/products", {
     method: "POST",
     body: payload,
   })
 }
 
 export function updateProduct(id: string, payload: ProductPayload) {
-  return request<Product>(MAIN_API_BASE_URL, `/api/products/${id}`, {
+  return request<Product>(MAIN_API_BASE_URL, `/products/${id}`, {
     method: "PUT",
     body: payload,
   })
 }
 
 export function updateProductStock(id: string, stockQuantity: number) {
-  return request<Product>(MAIN_API_BASE_URL, `/api/products/${id}/stock`, {
+  return request<Product>(MAIN_API_BASE_URL, `/products/${id}/stock`, {
     method: "PATCH",
     body: { stockQuantity },
   })
 }
 
 export function deleteProduct(id: string) {
-  return request<void>(MAIN_API_BASE_URL, `/api/products/${id}`, {
+  return request<void>(MAIN_API_BASE_URL, `/products/${id}`, {
     method: "DELETE",
   })
 }
 
 export function login(payload: LoginPayload) {
-  return request<LoginResponse>(AUTH_API_BASE_URL, "/api/Auth/login", {
+  return request<LoginResponse>(AUTH_API_BASE_URL, "/auth/login", {
     method: "POST",
     body: payload,
   })
@@ -123,7 +123,7 @@ export function getAccounts(query: {
   search?: string
 }) {
   const { token, ...params } = query
-  return request<UserPagedResult>(AUTH_API_BASE_URL, "/api/UserPermission/accounts", {
+  return request<UserPagedResult>(AUTH_API_BASE_URL, "/users/accounts", {
     token,
     query: params,
   })
@@ -132,7 +132,7 @@ export function getAccounts(query: {
 export function getAccountPermissions(token: string, accountId: string) {
   return request<UserPermissionDetail[]>(
     AUTH_API_BASE_URL,
-    `/api/UserPermission/account/${accountId}`,
+    `/users/account/${accountId}`,
     { token }
   )
 }
@@ -144,7 +144,7 @@ export function getPermissions(query: {
   search?: string
 }) {
   const { token, ...params } = query
-  return request<PermissionPagedResult>(AUTH_API_BASE_URL, "/api/Permission", {
+  return request<PermissionPagedResult>(AUTH_API_BASE_URL, "/permissions", {
     token,
     query: params,
   })
@@ -157,7 +157,7 @@ export function assignPermissions(payload: {
   expiresAt?: string | null
 }) {
   const { token, ...body } = payload
-  return request<UserPermissionDetail[]>(AUTH_API_BASE_URL, "/api/UserPermission/assign", {
+  return request<UserPermissionDetail[]>(AUTH_API_BASE_URL, "/users/assign", {
     token,
     method: "POST",
     body,
@@ -167,7 +167,7 @@ export function assignPermissions(payload: {
 export function revokePermission(token: string, accountId: string, permissionId: string) {
   return request<void>(
     AUTH_API_BASE_URL,
-    `/api/UserPermission/revoke/${accountId}/${permissionId}`,
+    `/users/revoke/${accountId}/${permissionId}`,
     {
       token,
       method: "DELETE",
