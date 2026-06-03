@@ -1,0 +1,1 @@
+-- Single shared database "AppDb" is created automatically by the POSTGRES_DB environment variable.
