@@ -1,3 +1,4 @@
+using AuthModule.Attributes;
 using AuthModule.DTOs;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -6,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace AuthModule.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/permission-groups")]
 [Authorize]
 public class PermissionGroupController : ControllerBase
 {
@@ -22,6 +23,7 @@ public class PermissionGroupController : ControllerBase
     }
 
     [HttpGet]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<PagedResult<PermissionGroupDto>>> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -36,6 +38,7 @@ public class PermissionGroupController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<PermissionGroupDto>> GetById(Guid id, CancellationToken ct = default)
     {
         var result = await _groupService.GetByIdAsync(id, ct);
@@ -45,6 +48,7 @@ public class PermissionGroupController : ControllerBase
     }
 
     [HttpPost]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<PermissionGroupDto>> Create(
         [FromBody] CreatePermissionGroupDto dto,
         CancellationToken ct = default)
@@ -68,6 +72,7 @@ public class PermissionGroupController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<PermissionGroupDto>> Update(
         Guid id,
         [FromBody] UpdatePermissionGroupDto dto,
@@ -93,6 +98,7 @@ public class PermissionGroupController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         var deleted = await _groupService.DeleteAsync(id, ct);

@@ -3,11 +3,7 @@ namespace AuthModule.DTOs;
 public class LoginDto
 {
     public string Email { get; set; } = string.Empty;
-    public string FullName { get; set; } = string.Empty;
     public string EntraIdObjectId { get; set; } = string.Empty;
-    public string? Avatar { get; set; }
-    public string? MobilePhone { get; set; }
-    public string? Department { get; set; }
 }
 
 public class LoginResponseDto

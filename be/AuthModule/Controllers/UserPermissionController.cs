@@ -1,3 +1,4 @@
+using AuthModule.Attributes;
 using AuthModule.DTOs;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -6,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace AuthModule.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/users")]
 [Authorize]
 public class UserPermissionController : ControllerBase
 {
@@ -22,6 +23,7 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpGet("accounts")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<PagedResult<UserAccountDto>>> GetAccounts(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -36,6 +38,7 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpGet("account/{accountId:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<List<UserPermissionDetailDto>>> GetByAccount(
         Guid accountId,
         CancellationToken ct = default)
@@ -45,6 +48,7 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpPost("assign")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<List<UserPermissionDetailDto>>> Assign(
         [FromBody] AssignUserPermissionDto dto,
         CancellationToken ct = default)
@@ -63,6 +67,7 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpPost("assign-by-group")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult<List<UserPermissionDetailDto>>> AssignByGroup(
         [FromBody] AssignByGroupDto dto,
         CancellationToken ct = default)
@@ -89,6 +94,7 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpDelete("revoke/{accountId:guid}/{permissionId:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult> Revoke(
         Guid accountId,
         Guid permissionId,
@@ -105,6 +111,7 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpDelete("revoke-group/{accountId:guid}/{permissionGroupId:guid}")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
     public async Task<ActionResult> RevokeByGroup(
         Guid accountId,
         Guid permissionGroupId,
