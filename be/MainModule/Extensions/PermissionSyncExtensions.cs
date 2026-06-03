@@ -90,8 +90,8 @@ public static class PermissionSyncExtensions
                     IsSystem = isSystem,
                     IsActive = true,
                     PermissionCode = meta?.Code ?? (meta?.AutoGenerateCode == true ? GeneratePermissionCode(normalizedPath, method) : null),
-                    PermissionName = null,
-                    Description = null,
+                    PermissionName = meta?.PermissionName,
+                    Description = meta?.Description,
                     CreatedAt = DateTime.UtcNow
                 });
             }

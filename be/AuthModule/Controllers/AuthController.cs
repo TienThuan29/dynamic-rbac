@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace AuthModule.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/auth")]
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
@@ -26,7 +26,7 @@ public class AuthController : ControllerBase
 
     [HttpPost("login")]
     [AllowAnonymous]
-    [PermissionMeta(Public = PublicMode.Public, IsSystem = false)]
+    [PermissionMeta(Public = PublicMode.Public, IsSystem = true)]
     public async Task<ActionResult<LoginResponseDto>> Login(
         [FromBody] LoginDto loginDto,
         CancellationToken cancellationToken)

@@ -1,4 +1,6 @@
 using AuthModule.Mappers;
+using AuthModule.DTOs;
+using AuthModule.Services;
 
 namespace AuthModule.Mappers;
 

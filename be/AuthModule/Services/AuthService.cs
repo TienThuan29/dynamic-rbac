@@ -39,9 +39,6 @@ public class AuthService : IAuthService
         }
 
         var accountId = Guid.NewGuid();
-        var fullName = string.IsNullOrWhiteSpace(loginDto.FullName)
-            ? loginDto.Email
-            : loginDto.FullName;
 
         var newAccount = new Account
         {
@@ -58,11 +55,8 @@ public class AuthService : IAuthService
         {
             Id = Guid.NewGuid(),
             AccountId = accountId,
-            FullName = fullName,
+            FullName = loginDto.Email.Split('@')[0],
             Email = loginDto.Email,
-            Avatar = loginDto.Avatar,
-            MobilePhone = loginDto.MobilePhone,
-            Department = loginDto.Department,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -117,14 +111,5 @@ public class AuthService : IAuthService
 
         account.User!.UpdatedAt = DateTime.UtcNow;
         account.User.Email = loginDto.Email;
-
-        if (!string.IsNullOrWhiteSpace(loginDto.FullName))
-            account.User.FullName = loginDto.FullName;
-        if (!string.IsNullOrWhiteSpace(loginDto.Avatar))
-            account.User.Avatar = loginDto.Avatar;
-        if (!string.IsNullOrWhiteSpace(loginDto.MobilePhone))
-            account.User.MobilePhone = loginDto.MobilePhone;
-        if (!string.IsNullOrWhiteSpace(loginDto.Department))
-            account.User.Department = loginDto.Department;
     }
 }

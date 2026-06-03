@@ -44,4 +44,14 @@ public sealed class PermissionMetaAttribute : Attribute
     /// Default: <c>false</c> (leaves <c>permission_code</c> as <c>null</c>).
     /// </summary>
     public bool AutoGenerateCode { get; set; } = false;
+
+    /// <summary>
+    /// Display name for this permission (shown in admin UI).
+    /// </summary>
+    public string? PermissionName { get; set; } = null;
+
+    /// <summary>
+    /// Human-readable description for this permission.
+    /// </summary>
+    public string? Description { get; set; } = null;
 }
