@@ -1,0 +1,28 @@
+@baseUrl = http://localhost:5000
+
+### Auth - Login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+
+### Auth - Register
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "test123"
+}
+
+### Permissions - List
+GET {{baseUrl}}/api/permissions
+
+### Permission Groups - List
+GET {{baseUrl}}/api/groups
+
+### Products - List
+GET {{baseUrl}}/api/products
