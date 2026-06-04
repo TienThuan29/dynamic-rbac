@@ -1,4 +1,4 @@
-# API Gateway Admin Dashboard
+# Dynamic Permission Demo
 
 React + Vite frontend for managing the backend demo entities:
 

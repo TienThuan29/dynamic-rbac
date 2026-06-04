@@ -1,12 +1,14 @@
+import axios from "axios"
 import type {
   LoginPayload,
   LoginResponse,
+  Permission,
   PermissionPagedResult,
   Product,
   ProductPagedResult,
   ProductPayload,
-  QueryValue,
   RequestOptions,
+  UpdatePermissionPayload,
   UserPagedResult,
   UserPermissionDetail,
 } from "@/types/api"
@@ -23,29 +25,15 @@ export class ApiError extends Error {
   }
 }
 
-function joinUrl(baseUrl: string, path: string, query?: Record<string, QueryValue>) {
-  const base = baseUrl.replace(/\/$/, "")
-  const cleanPath = path.replace(/^\//, "")
-  const url = `${base}/${cleanPath}`
-  const params = new URLSearchParams()
+function readError(data: unknown, fallback: string) {
+  if (data && typeof data === "object") {
+    const payload = data as { message?: unknown; error?: unknown }
 
-  Object.entries(query ?? {}).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      params.set(key, String(value))
-    }
-  })
-
-  const queryString = params.toString()
-  return queryString ? `${url}?${queryString}` : url
-}
-
-async function readError(response: Response) {
-  try {
-    const payload = await response.json()
-    return payload?.message ?? payload?.error ?? response.statusText
-  } catch {
-    return response.statusText
+    if (typeof payload.message === "string") return payload.message
+    if (typeof payload.error === "string") return payload.error
   }
+
+  return fallback
 }
 
 async function request<T>(
@@ -53,58 +41,71 @@ async function request<T>(
   path: string,
   { method = "GET", token, body, query }: RequestOptions = {}
 ) {
-  const response = await fetch(joinUrl(baseUrl, path, query), {
-    method,
-    headers: {
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  try {
+    const response = await axios.request<T>({
+      baseURL: baseUrl,
+      url: path,
+      method,
+      params: query,
+      data: body,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
 
-  if (!response.ok) {
-    throw new ApiError(await readError(response), response.status)
+    if (response.status === 204) {
+      return undefined as T
+    }
+
+    return response.data
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      throw new ApiError(
+        readError(err.response?.data, err.message),
+        err.response?.status ?? 0
+      )
+    }
+
+    throw err
   }
-
-  if (response.status === 204) {
-    return undefined as T
-  }
-
-  return (await response.json()) as T
 }
 
 export function getProducts(query: {
+  token?: string | null
   page: number
   pageSize: number
   category?: string
   search?: string
 }) {
-  return request<ProductPagedResult>(MAIN_API_BASE_URL, "/products", { query })
+  const { token, ...params } = query
+  return request<ProductPagedResult>(MAIN_API_BASE_URL, "/products", { token, query: params })
 }
 
-export function createProduct(payload: ProductPayload) {
+export function createProduct(token: string | null, payload: ProductPayload) {
   return request<Product>(MAIN_API_BASE_URL, "/products", {
+    token,
     method: "POST",
     body: payload,
   })
 }
 
-export function updateProduct(id: string, payload: ProductPayload) {
+export function updateProduct(token: string | null, id: string, payload: ProductPayload) {
   return request<Product>(MAIN_API_BASE_URL, `/products/${id}`, {
+    token,
     method: "PUT",
     body: payload,
   })
 }
 
-export function updateProductStock(id: string, stockQuantity: number) {
+export function updateProductStock(token: string | null, id: string, stockQuantity: number) {
   return request<Product>(MAIN_API_BASE_URL, `/products/${id}/stock`, {
+    token,
     method: "PATCH",
     body: { stockQuantity },
   })
 }
 
-export function deleteProduct(id: string) {
+export function deleteProduct(token: string | null, id: string) {
   return request<void>(MAIN_API_BASE_URL, `/products/${id}`, {
+    token,
     method: "DELETE",
   })
 }
@@ -173,4 +174,41 @@ export function revokePermission(token: string, accountId: string, permissionId:
       method: "DELETE",
     }
   )
+}
+
+export function getPermission(token: string, id: string) {
+  return request<Permission>(AUTH_API_BASE_URL, `/permissions/${id}`, { token })
+}
+
+export function updatePermission(
+  token: string,
+  id: string,
+  payload: UpdatePermissionPayload
+) {
+  return request<Permission>(AUTH_API_BASE_URL, `/permissions/${id}`, {
+    token,
+    method: "PUT",
+    body: payload,
+  })
+}
+
+export function deletePermission(token: string, id: string) {
+  return request<void>(AUTH_API_BASE_URL, `/permissions/${id}`, {
+    token,
+    method: "DELETE",
+  })
+}
+
+export function assignPermissionsWithExpiry(payload: {
+  token: string
+  accountId: string
+  permissionIds: string[]
+  expiresAt?: string | null
+}) {
+  const { token, ...body } = payload
+  return request<UserPermissionDetail[]>(AUTH_API_BASE_URL, "/users/assign", {
+    token,
+    method: "POST",
+    body,
+  })
 }

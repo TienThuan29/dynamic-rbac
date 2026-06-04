@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
-import { Boxes, LogOut, ShieldCheck } from "lucide-react"
+import { LogOut, ShieldCheck } from "lucide-react"
+import { PermissionManager } from "@/components/dashboard/permission-manager"
 import { ProductManager } from "@/components/dashboard/product-manager"
 import { UserManager } from "@/components/dashboard/user-manager"
 import { Badge } from "@/components/ui/badge"
@@ -37,6 +38,8 @@ export function DashboardPage({
     siteConfig.defaultDashboardSectionId
   )
 
+  console.log("[Dashboard] Session:", JSON.stringify(session, null, 2))
+
   const activeSection = useMemo(() => {
     return (
       siteConfig.dashboardSections.find((section) => section.id === activeSectionId) ??
@@ -62,8 +65,11 @@ export function DashboardPage({
     if (activeSection.id === "users") {
       return <UserManager session={session} onLogout={onLogout} />
     }
+    if (activeSection.id === "permissions") {
+      return <PermissionManager session={session} />
+    }
 
-    return <ProductManager />
+    return <ProductManager session={session} />
   }
 
   if (!session) {
@@ -104,7 +110,7 @@ export function DashboardPage({
                   </div>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              {/* <div className="flex flex-wrap gap-2">
                 {siteConfig.dashboardSections.map((section) => (
                   <Badge
                     key={section.id}
@@ -113,13 +119,15 @@ export function DashboardPage({
                       section.id === "products" &&
                         "border-emerald-200 bg-emerald-50 text-emerald-700",
                       section.id === "users" &&
-                        "border-sky-200 bg-sky-50 text-sky-700"
+                        "border-sky-200 bg-sky-50 text-sky-700",
+                      section.id === "permissions" &&
+                        "border-violet-200 bg-violet-50 text-violet-700"
                     )}
                   >
                     {section.label}
                   </Badge>
                 ))}
-              </div>
+              </div> */}
             </div>
 
             <Separator />
@@ -136,7 +144,14 @@ export function DashboardPage({
                     className={cn(
                       "h-auto w-full justify-start gap-3 px-3 py-3 text-left",
                       active &&
-                        "bg-emerald-50 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700"
+                        section.id === "products" &&
+                        "bg-emerald-50 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700",
+                      active &&
+                        section.id === "users" &&
+                        "bg-sky-50 text-sky-700 hover:bg-sky-50 hover:text-sky-700",
+                      active &&
+                        section.id === "permissions" &&
+                        "bg-violet-50 text-violet-700 hover:bg-violet-50 hover:text-violet-700"
                     )}
                     onClick={() => handleSectionChange(section.id)}
                   >
@@ -174,7 +189,7 @@ export function DashboardPage({
                   Sign out
                 </Button>
               </div>
-              <div className="mt-3 flex items-center gap-3 rounded-md border bg-muted/30 p-3">
+              {/* <div className="mt-3 flex items-center gap-3 rounded-md border bg-muted/30 p-3">
                 <Boxes className="h-4 w-4 text-amber-600" />
                 <div className="min-w-0">
                   <div className="text-sm font-medium">Backend entities</div>
@@ -182,7 +197,7 @@ export function DashboardPage({
                     {siteConfig.entities}
                   </div>
                 </div>
-              </div>
+              </div> */}
             </div>
           </div>
         </aside>

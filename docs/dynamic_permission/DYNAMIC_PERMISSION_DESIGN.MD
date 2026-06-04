@@ -449,3 +449,108 @@ hoặc xoá thủ công nếu `is_system = false`.
 
 → Sync coi đây là endpoint mới (vì key `METHOD:/path` khác). Row cũ vẫn còn.
 Admin nên dọn thủ công hoặc viết script clean-up.
+
+---
+
+## 11. Wildcard `:admin` — Toàn Quyền Resource
+
+### 11.1. Mục đích
+
+Thay vì gán từng action permission cho một admin (VD: `products:list`, `products:create`, `products:read`, ...),
+có thể gán một row duy nhất `[resource]:admin` để grant toàn bộ quyền trên resource đó.
+
+### 11.2. Ví dụ
+
+|| Khi **không** dùng `:admin` | Khi **dùng** `:admin` |
+||---|---|
+| Admin cần gán 6 permissions cho products | Gán 1 permission `products:admin` |
+| Thêm endpoint mới → phải gán thêm | Tự động có quyền mới |
+| Có thể thiếu action nào đó | Đảm bảo đầy đủ |
+
+### 11.3. Cú pháp
+
+```
+[resource]:admin
+```
+
+Ví dụ: `products:admin`, `orders:admin`, `users:admin`.
+
+### 11.4. Sync tự động
+
+`SyncEndpointPermissionsAsync` scan tất cả route đã discover, extract top-level resource
+(segment đầu tiên không phải `api` và không phải `{param}`), và auto-tạo row `:admin` nếu chưa tồn tại.
+
+```
+Discovery: GET /api/products, POST /api/products, ...
+Extract resource: "products"
+Auto-create: products:admin  (Endpoint=NULL, Method=NULL, IsSystem=true)
+```
+
+> **Idempotency:** nếu `products:admin` đã tồn tại trong DB → bỏ qua, không ghi đè.
+
+### 11.5. Kiểm tra tại Gatekeeper (runtime)
+
+```
+1. Exact match — UserPermission có PermissionId == permission.Id của endpoint?
+   → Có → ALLOW
+
+2. Wildcard match — UserPermission có PermissionCode == "[resource]:admin"?
+   → Có → ALLOW
+
+→ Không có → DENY 403
+```
+
+**Cách extract resource từ path:**
+
+```
+/api/products/{id}/stock  →  "products"
+/api/users/{id}           →  "users"
+/api/products             →  "products"
+```
+
+### 11.6. Cấu trúc row `:admin` trong DB
+
+|| Cột | Giá trị |
+||-----|---------|
+| `id` | `Guid.NewGuid()` |
+| `method` | `NULL` |
+| `endpoint` | `NULL` |
+| `permission_code` | `[resource]:admin` |
+| `permission_name` | `Quản trị [resource]` |
+| `is_public` | `false` |
+| `is_system` | `true` |
+| `is_active` | `true` |
+
+### 11.7. Thêm module mới
+
+1. Restart module → `SyncEndpointPermissionsAsync` chạy.
+2. Auto-discover route → extract resource → tạo `[resource]:admin` row mới.
+3. Không cần migrate, không cần sửa code.
+
+### 11.8. Sequence — wildcard check tại Gatekeeper
+
+```mermaid
+sequenceDiagram
+    participant GW as GatewayAuthMiddleware
+    participant GK as AuthModule<br/>/api/gatekeeper
+    participant DB as permissions +<br/>user_permissions
+
+    GW->>GK: POST { authHeader, method, path }
+    GK->>DB: SELECT permission WHERE endpoint=path AND method=verb
+    DB-->>GK: permission row (id, code, is_public)
+
+    alt endpoint is public
+        GK-->>GW: Allowed (public)
+    else no permission record
+        GK-->>GW: Deny 403 (no record)
+    else exact match
+        GK->>DB: SELECT 1 FROM user_permissions<br/>WHERE account_id=? AND permission_id=?
+        DB-->>GK: exists → Allowed
+    else wildcard admin check
+        GK->>GK: Extract resource from path → "products"
+        GK->>DB: SELECT 1 FROM user_permissions up<br/>JOIN permissions p ON up.permission_id = p.id<br/>WHERE account_id=? AND p.permission_code='products:admin'
+        DB-->>GK: exists → Allowed
+    end
+
+    GK-->>GW: GatekeeperResponse { allowed, statusCode, userId, ... }
+```

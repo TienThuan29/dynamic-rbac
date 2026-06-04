@@ -1,8 +1,8 @@
 import type { LucideIcon } from "lucide-react"
-import { LayoutDashboard, LogIn, PackageCheck, Users } from "lucide-react"
+import { LayoutDashboard, LogIn, PackageCheck, Shield, Users } from "lucide-react"
 
 export type SitePageId = "login" | "dashboard"
-export type DashboardSectionId = "products" | "users"
+export type DashboardSectionId = "products" | "users" | "permissions"
 
 export type SitePage = {
   id: SitePageId
@@ -53,13 +53,21 @@ const dashboardSections: DashboardSection[] = [
     icon: Users,
     requiresAuth: true,
   },
+  {
+    id: "permissions",
+    label: "Permissions",
+    module: "AuthModule",
+    path: "/dashboard/permissions",
+    icon: Shield,
+    requiresAuth: true,
+  },
 ]
 
 const defaultPageId: SitePageId = "login"
 const defaultDashboardSectionId: DashboardSectionId = "products"
 
 export const siteConfig = {
-  name: "API Gateway Admin",
+  name: "Dynamic Permission Demo",
   description: "Azure demo dashboard",
   entities: "Product, Account, User, Permission",
   defaultPageId,

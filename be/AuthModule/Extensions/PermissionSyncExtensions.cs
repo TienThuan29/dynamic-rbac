@@ -107,17 +107,114 @@ public static class PermissionSyncExtensions
         if (toInsert.Count == 0)
         {
             logger.LogInformation("[PermissionSync] No new endpoints to sync.");
+        }
+        else
+        {
+            await db.Permissions.AddRangeAsync(toInsert);
+            await db.SaveChangesAsync();
+
+            logger.LogInformation("[PermissionSync] Synced {Count} new endpoint(s) to permissions table.", toInsert.Count);
+
+            foreach (var p in toInsert)
+                logger.LogDebug("[PermissionSync]   + {Method,-7} {Endpoint}  (public={IsPublic})", p.Method, p.Endpoint, p.IsPublic);
+        }
+
+        // --- 4. Auto-generate [resource]:admin permissions for each discovered resource ---
+        await SyncAdminPermissionsAsync(db, allEndpoints, logger);
+    }
+
+    /// <summary>
+    /// Ensures a <c>[resource]:admin</c> permission row exists for each unique
+    /// top-level resource discovered from route patterns (e.g. <c>products:admin</c>
+    /// for <c>/api/products/*</c>). Having this permission grants the user full
+    /// access to all actions on that resource.
+    /// </summary>
+    private static async Task SyncAdminPermissionsAsync(
+        AuthDbContext db,
+        IEnumerable<Microsoft.AspNetCore.Http.Endpoint> endpoints,
+        ILogger logger)
+    {
+        // Extract unique resources: the first non-parameter, non-"api" segment
+        var resources = endpoints
+            .OfType<RouteEndpoint>()
+            .Select(e => e.RoutePattern.RawText)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .SelectMany(p => ExtractResources(p))
+            .Where(r => r is not null)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (resources.Count == 0)
+            return;
+
+        // Load existing permission codes
+        var existingCodes = await db.Permissions
+            .AsNoTracking()
+            .Where(p => p.PermissionCode != null)
+            .Select(p => p.PermissionCode!)
+            .ToListAsync();
+
+        var existingSet = existingCodes
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var toInsert = resources
+            .Select(r => $"{r}:admin")
+            .Where(code => !existingSet.Contains(code))
+            .Select(code => new Permission
+            {
+                Id = Guid.NewGuid(),
+                Endpoint = null,  // admin covers all endpoints under the resource
+                Method = null,    // admin covers all HTTP methods
+                PermissionCode = code,
+                PermissionName = $"Quản trị {NormalizeResourceName(code[":admin".Length..])}",
+                Description = $"Toàn quyền trên resource {NormalizeResourceName(code[":admin".Length..])}",
+                IsPublic = false,
+                IsSystem = true,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            })
+            .ToList();
+
+        if (toInsert.Count == 0)
+        {
+            logger.LogInformation("[PermissionSync] All admin permissions already exist.");
             return;
         }
 
         await db.Permissions.AddRangeAsync(toInsert);
         await db.SaveChangesAsync();
 
-        logger.LogInformation("[PermissionSync] Synced {Count} new endpoint(s) to permissions table.", toInsert.Count);
+        logger.LogInformation("[PermissionSync] Synced {Count} admin permission(s): {Codes}",
+            toInsert.Count, string.Join(", ", toInsert.Select(p => p.PermissionCode)));
 
+        // Update in-memory set so the guard below works
         foreach (var p in toInsert)
-            logger.LogDebug("[PermissionSync]   + {Method,-7} {Endpoint}  (public={IsPublic})", p.Method, p.Endpoint, p.IsPublic);
+            existingSet.Add(p.PermissionCode);
     }
+
+    /// <summary>
+    /// Extracts the top-level resource name from a route pattern.
+    /// /api/products/{id}/stock  →  "products"
+    /// /api/users/{id}          →  "users"
+    /// </summary>
+    private static IEnumerable<string?> ExtractResources(string routePattern)
+    {
+        var segments = routePattern.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var seg in segments)
+        {
+            // Skip "api" and parameter placeholders
+            if (seg.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+                seg.StartsWith('{') || seg.StartsWith(':'))
+                continue;
+
+            yield return seg.ToLowerInvariant().Replace("-", "_");
+            yield break; // only the first real segment (the resource)
+        }
+    }
+
+    private static string NormalizeResourceName(string resource) =>
+        resource.Replace("_", "-");
 
     // -----------------------------------------------------------------------
 
