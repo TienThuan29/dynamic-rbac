@@ -42,7 +42,7 @@ import {
   updateProduct,
   updateProductStock,
 } from "@/api/api"
-import type { Product, ProductPayload } from "@/types/api"
+import type { LoginResponse, Product, ProductPayload } from "@/types/api"
 
 type ProductFormState = {
   name: string
@@ -120,7 +120,7 @@ function getStockBadge(product: Product) {
   return <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">In stock</Badge>
 }
 
-export function ProductManager() {
+export function ProductManager({ session }: { session: LoginResponse | null }) {
   const [products, setProducts] = useState<Product[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -142,6 +142,7 @@ export function ProductManager() {
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const token = session?.accessToken ?? ""
 
   const stats = useMemo(() => {
     const visibleValue = products.reduce(
@@ -169,7 +170,13 @@ export function ProductManager() {
       setError(null)
 
       try {
-        const result = await getProducts({ page, pageSize, category, search })
+        const result = await getProducts({
+          token,
+          page,
+          pageSize,
+          category,
+          search,
+        })
 
         if (!ignore) {
           setProducts(result.items)
@@ -191,7 +198,7 @@ export function ProductManager() {
     return () => {
       ignore = true
     }
-  }, [category, page, pageSize, refreshKey, search])
+  }, [category, page, pageSize, refreshKey, search, session?.accessToken])
 
   function openCreateDialog() {
     setEditingProduct(null)
@@ -234,10 +241,10 @@ export function ProductManager() {
       const payload = toPayload(form)
 
       if (editingProduct) {
-        await updateProduct(editingProduct.id, payload)
+        await updateProduct(token, editingProduct.id, payload)
         setNotice(`${payload.name} updated.`)
       } else {
-        await createProduct(payload)
+        await createProduct(token, payload)
         setNotice(`${payload.name} created.`)
       }
 
@@ -260,7 +267,7 @@ export function ProductManager() {
     setNotice(null)
 
     try {
-      await updateProductStock(stockProduct.id, Number(stockValue || 0))
+      await updateProductStock(token, stockProduct.id, Number(stockValue || 0))
       setStockProduct(null)
       setNotice(`${stockProduct.name} stock updated.`)
       setRefreshKey((value) => value + 1)
@@ -279,7 +286,7 @@ export function ProductManager() {
     setNotice(null)
 
     try {
-      await deleteProduct(deleteTarget.id)
+      await deleteProduct(token, deleteTarget.id)
       setNotice(`${deleteTarget.name} archived.`)
       setDeleteTarget(null)
       setRefreshKey((value) => value + 1)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
   CheckCircle2,
+  Crown,
   KeyRound,
   Loader2,
   LogOut,
@@ -25,7 +26,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
-  assignPermissions,
+  assignPermissionsWithExpiry,
   getAccountPermissions,
   getAccounts,
   getPermissions,
@@ -85,6 +86,14 @@ function permissionTitle(permission: Permission | UserPermissionDetail) {
   )
 }
 
+function isAdminPermission(permission: Permission | UserPermissionDetail) {
+  return (
+    permission.permissionCode?.endsWith(":admin") &&
+    permission.method === null &&
+    permission.endpoint === null
+  )
+}
+
 export type UserManagerProps = {
   session: LoginResponse | null
   onLogout: () => void
@@ -96,6 +105,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
   const [accountPermissions, setAccountPermissions] = useState<UserPermissionDetail[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [draftPermissionIds, setDraftPermissionIds] = useState<string[]>([])
+  const [expiryDate, setExpiryDate] = useState<string>("")
   const [accountTotal, setAccountTotal] = useState(0)
   const [permissionTotal, setPermissionTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -182,6 +192,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
     async function loadPermissionData() {
       setLoadingPermissions(true)
       setError(null)
+      setExpiryDate("")
 
       try {
         const [assigned, available] = await Promise.all([
@@ -221,6 +232,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
     setAccountPermissions([])
     setPermissions([])
     setDraftPermissionIds([])
+    setExpiryDate("")
     setAccountTotal(0)
     setPermissionTotal(0)
     setNotice(null)
@@ -265,10 +277,11 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
 
     try {
       if (idsToAdd.length > 0) {
-        await assignPermissions({
+        await assignPermissionsWithExpiry({
           token,
           accountId: selectedAccount.accountId,
           permissionIds: idsToAdd,
+          expiresAt: expiryDate || null,
         })
       }
 
@@ -281,6 +294,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
       }
 
       setNotice(`${selectedAccount.fullName ?? selectedAccount.email} permissions saved.`)
+      setExpiryDate("")
       setRefreshKey((value) => value + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save permissions.")
@@ -520,14 +534,27 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
                   {selectedAccount?.email || "No account selected"}
                 </CardDescription>
               </div>
-              <Button
-                size="sm"
-                onClick={handleSavePermissions}
-                disabled={!selectedAccount || saving || loadingPermissions}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Save permissions
-              </Button>
+              <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-muted-foreground whitespace-nowrap">
+                    Expiry:
+                  </label>
+                  <input
+                    type="date"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={expiryDate}
+                    onChange={(e) => setExpiryDate(e.target.value)}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={handleSavePermissions}
+                  disabled={!selectedAccount || saving || loadingPermissions}
+                >
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save permissions
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4 p-4 pt-0">
@@ -595,13 +622,16 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
                   {permissions.map((permission) => {
                     const checked = draftPermissionSet.has(permission.id)
                     const assigned = assignedPermissionIds.has(permission.id)
+                    const isAdmin = isAdminPermission(permission)
 
                     return (
                       <label
                         key={permission.id}
                         className={cn(
                           "flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/30",
-                          checked && "bg-emerald-50/60"
+                          checked && "bg-emerald-50/60",
+                          isAdmin && checked && "bg-violet-50/60",
+                          isAdmin && !checked && "bg-violet-50/20"
                         )}
                       >
                         <Checkbox
@@ -613,6 +643,9 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
+                            {isAdmin && (
+                              <Crown className="h-4 w-4 shrink-0 text-violet-600" />
+                            )}
                             <span className="font-medium">
                               {permissionTitle(permission)}
                             </span>
@@ -627,12 +660,20 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
                             {permission.isSystem ? (
                               <Badge variant="secondary">System</Badge>
                             ) : null}
+                            {isAdmin && (
+                              <Badge
+                                variant="outline"
+                                className="border-violet-200 bg-violet-50 text-violet-700"
+                              >
+                                Admin wildcard
+                              </Badge>
+                            )}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             <Badge className={methodClass(permission.method)}>
                               {permission.method ?? "ANY"}
                             </Badge>
-                            <span className="font-mono">{permission.endpoint ?? "No endpoint"}</span>
+                            <span className="font-mono">{permission.endpoint ?? "All endpoints"}</span>
                           </div>
                           {permission.description ? (
                             <p className="mt-1 text-xs text-muted-foreground">

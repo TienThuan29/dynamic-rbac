@@ -85,6 +85,14 @@ export type PermissionPagedResult = {
   pageSize: number
 }
 
+export type UpdatePermissionPayload = {
+  permissionName?: string | null
+  permissionCode?: string | null
+  description?: string | null
+  isPublic?: boolean | null
+  isActive?: boolean | null
+}
+
 export type LoginPayload = {
   email: string
   entraIdObjectId: string

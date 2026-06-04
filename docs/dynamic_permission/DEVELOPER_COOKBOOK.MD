@@ -13,8 +13,9 @@
 3. [System / Internal endpoint](#3-system--internal-endpoint)
 4. [Override class-level cho 1 action](#4-override-class-level-cho-1-action)
 5. [Kết hợp với AutoGenerateCode](#5-kết-hợp-với-autogeneratecode)
-6. [Anti-patterns — những gì KHÔNG nên làm](#6-anti-patterns--những-gì-không-nên-làm)
-7. [Cheat sheet](#7-cheat-sheet)
+6. [Wildcard `:admin` — toàn quyền trên resource](#7-wildcard-admin--toàn-quyền-trên-resource)
+7. [Anti-patterns — những gì KHÔNG nên làm](#8-anti-patterns--những-gì-không-nên-làm)
+8. [Cheat sheet](#9-cheat-sheet)
 
 ---
 
@@ -179,22 +180,76 @@ public class AdminController : ControllerBase
 
 ---
 
-## 6. Anti-patterns — những gì KHÔNG nên làm
+## 7. Wildcard `:admin` — toàn quyền trên resource
 
-### ❌ 6.1. Đặt `Code` trùng nhau ở 2 endpoint khác nhau
+### 7.1. Khi nào dùng
+
+Khi gán quyền cho admin (hoặc user cần full quyền trên một resource),
+thay vì gán từng action (`products:list`, `products:create`, `products:read`, ...) chỉ cần
+gán **một row duy nhất**:
+
+```
+products:admin  →  được phép gọi MỌI endpoint trong /api/products/*
+```
+
+### 7.2. Cách hoạt động
+
+Row `products:admin` được **auto-sync** vào DB khi app khởi động. Admin **chỉ việc gán**
+permission này cho user/group — không cần tạo thủ công.
+
+### 7.3. Ví dụ trong DB
+
+| permission_code | endpoint | method | is_public | is_system |
+|---|---|---|---|---|
+| `products:list` | `/api/products` | `GET` | `true` | `false` |
+| `products:create` | `/api/products` | `POST` | `false` | `false` |
+| `products:read` | `/api/products/{id:guid}` | `GET` | `false` | `false` |
+| **`products:admin`** | `NULL` | `NULL` | `false` | `true` |
+
+Row `products:admin` có `endpoint=NULL`, `method=NULL` — đây là **wildcard entry**, không
+map đến endpoint cụ thể. Tại runtime, Gatekeeper kiểm tra:
+
+```
+User có products:admin?
+  → Có → cho phép mọi request /api/products/* (bất kể method nào)
+  → Không → kiểm tra exact permission match như bình thường
+```
+
+### 7.4. Thêm module mới
+
+1. Developer tạo controller mới, ví dụ `OrdersController` tại `/api/orders`.
+2. Restart module.
+3. Sync tự động tạo row `orders:admin` vào DB.
+4. Admin gán `orders:admin` cho user → user có full quyền orders.
+
+> **Không cần code thêm bất cứ dòng nào** cho `:admin` — chỉ cần restart.
+
+### 7.5. Trường hợp đặc biệt
+
+| Tình huống | Hành vi |
+|---|---|
+| User có `products:admin` nhưng endpoint là public | **ALLOW** (public luôn allowed trước) |
+| User có `products:admin` nhưng endpoint không tồn tại trong DB | **DENY 403** (no permission record) |
+| User có `products:admin` nhưng `is_active = false` trên permission | **DENY** (không có row nào match) |
+| Admin xóa row `products:admin` khỏi DB | `:admin` không còn hoạt động |
+
+---
+
+## 8. Anti-patterns — những gì KHÔNG nên làm
+
+### 8.1. Đặt `Code` trùng nhau ở 2 endpoint khác nhau
 
 ```csharp
 [HttpPost("create")]  [PermissionMeta(Code = "products:save")] public IActionResult Create() { ... }
-[HttpPut("{id}")]     [PermissionMeta(Code = "products:save")] public IActionResult Update() { ... }   // ❌ DB throws unique violation
+[HttpPut("{id}")]     [PermissionMeta(Code = "products:save")] public IActionResult Update() { ... }   // DB throws unique violation
 ```
 
-`permission_code` có **partial unique index** → 2 row cùng code (NOT NULL) sẽ fail. Sửa:
-dùng `products:create` và `products:update`, hoặc bật `AutoGenerateCode`.
+→ 2 row cùng code (NOT NULL) sẽ fail unique index. Sửa: dùng `products:create` và `products:update`, hoặc bật `AutoGenerateCode`.
 
-### ❌ 6.2. Hardcode code trong logic kiểm tra quyền
+### 8.2. Hardcode code trong logic kiểm tra quyền
 
 ```csharp
-// ❌ Magic string khắp nơi
+// Magic string khắp nơi
 if (user.HasPermission("products:create")) { ... }
 ```
 
@@ -210,25 +265,25 @@ public static class Perms
 if (user.HasPermission(Perms.ProductsCreate)) { ... }
 ```
 
-### ❌ 6.3. Dựa vào `permission_code` được auto-gen làm key business logic
+### 8.3. Dựa vào `permission_code` được auto-gen làm key business logic
 
 ```csharp
-// ❌ AutoGenerateCode có thể đổi nếu đổi route convention
+// AutoGenerateCode có thể đổi nếu đổi route convention
 if (user.HasPermission("products:patch_stock")) { ... }
 ```
 
 → Đặt `Code = "products:update_stock"` explicit nếu code này được dùng trong code business.
 Auto-gen chỉ phù hợp cho admin gán quyền qua UI.
 
-### ❌ 6.4. Quên `[AllowAnonymous]` khi `Public = PublicMode.Public`
+### 8.4. Quên `[AllowAnonymous]` khi `Public = PublicMode.Public`
 
 ```csharp
 [HttpGet("public-data")]
-[PermissionMeta(Public = PublicMode.Public)]   // ❌ DB ghi is_public=true nhưng runtime vẫn yêu cầu auth
+[PermissionMeta(Public = PublicMode.Public)]   // DB ghi is_public=true nhưng runtime vẫn yêu cầu auth
 public IActionResult Data() { ... }
 ```
 
-`PublicMode.Public` chỉ ảnh hưởng đến **DB metadata**, không tự động bypass authentication
+→ `PublicMode.Public` chỉ ảnh hưởng đến **DB metadata**, không tự động bypass authentication
 middleware. Cần thêm `[AllowAnonymous]`:
 
 ```csharp
@@ -240,7 +295,7 @@ public IActionResult Data() { ... }
 
 ---
 
-## 7. Cheat Sheet
+## 9. Cheat Sheet
 
 | Tình huống | Snippet |
 |------------|---------|
@@ -251,6 +306,7 @@ public IActionResult Data() { ... }
 | Internal/system | `[PermissionMeta(Code="system:x", IsSystem=true, Public=PublicMode.Private)]` |
 | Force private (override `[AllowAnonymous]`) | `[PermissionMeta(Public=PublicMode.Private)]` |
 | Class-level mặc định + method override | Class: `[PermissionMeta(...)]`, Method: `[PermissionMeta(...)]` |
+| **`:admin` wildcard** | Auto-sync, chỉ gán `[resource]:admin` cho user là đủ |
 
 ---
 

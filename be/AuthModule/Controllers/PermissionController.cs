@@ -23,7 +23,7 @@ public class PermissionController : ControllerBase
     }
 
     [HttpGet]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
     public async Task<ActionResult<PagedResult<PermissionDto>>> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -38,7 +38,7 @@ public class PermissionController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
     public async Task<ActionResult<PermissionDto>> GetById(Guid id, CancellationToken ct = default)
     {
         var result = await _permissionService.GetByIdAsync(id, ct);
@@ -48,7 +48,7 @@ public class PermissionController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
     public async Task<ActionResult<PermissionDto>> Update(
         Guid id,
         [FromBody] UpdatePermissionDto dto,
@@ -73,7 +73,7 @@ public class PermissionController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         try

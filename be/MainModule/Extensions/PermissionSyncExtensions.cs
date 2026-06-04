@@ -101,17 +101,98 @@ public static class PermissionSyncExtensions
         if (toInsert.Count == 0)
         {
             logger.LogInformation("[PermissionSync][MainModule] No new endpoints to sync.");
+        }
+        else
+        {
+            await db.Permissions.AddRangeAsync(toInsert);
+            await db.SaveChangesAsync();
+
+            logger.LogInformation("[PermissionSync][MainModule] Synced {Count} new endpoint(s).", toInsert.Count);
+
+            foreach (var p in toInsert)
+                logger.LogDebug("[PermissionSync][MainModule]   + {Method,-7} {Endpoint}  (public={IsPublic})", p.Method, p.Endpoint, p.IsPublic);
+        }
+
+        // --- 4. Auto-generate [resource]:admin permissions ---
+        await SyncAdminPermissionsAsync(db, allEndpoints, logger);
+    }
+
+    /// <summary>
+    /// Ensures a <c>[resource]:admin</c> permission row exists for each unique
+    /// top-level resource discovered from route patterns. Having this permission
+    /// grants the user full access to all actions on that resource at the gateway level.
+    /// </summary>
+    private static async Task SyncAdminPermissionsAsync(
+        MainDbContext db,
+        IEnumerable<Microsoft.AspNetCore.Http.Endpoint> endpoints,
+        ILogger logger)
+    {
+        var resources = endpoints
+            .OfType<RouteEndpoint>()
+            .Select(e => e.RoutePattern.RawText)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .SelectMany(ExtractResources)
+            .Where(r => r is not null)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (resources.Count == 0)
+            return;
+
+        var existingCodes = await db.Permissions
+            .AsNoTracking()
+            .Where(p => p.PermissionCode != null)
+            .Select(p => p.PermissionCode!)
+            .ToListAsync();
+
+        var existingSet = existingCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var toInsert = resources
+            .Select(r => $"{r}:admin")
+            .Where(code => !existingSet.Contains(code))
+            .Select(code => new Permission
+            {
+                Id = Guid.NewGuid(),
+                Endpoint = null,
+                Method = null,
+                PermissionCode = code,
+                PermissionName = $"Quản trị {NormalizeResourceName(code[":admin".Length..])}",
+                Description = $"Toàn quyền trên resource {NormalizeResourceName(code[":admin".Length..])}",
+                IsPublic = false,
+                IsSystem = true,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            })
+            .ToList();
+
+        if (toInsert.Count == 0)
+        {
+            logger.LogInformation("[PermissionSync][MainModule] All admin permissions already exist.");
             return;
         }
 
         await db.Permissions.AddRangeAsync(toInsert);
         await db.SaveChangesAsync();
 
-        logger.LogInformation("[PermissionSync][MainModule] Synced {Count} new endpoint(s).", toInsert.Count);
-
-        foreach (var p in toInsert)
-            logger.LogDebug("[PermissionSync][MainModule]   + {Method,-7} {Endpoint}  (public={IsPublic})", p.Method, p.Endpoint, p.IsPublic);
+        logger.LogInformation("[PermissionSync][MainModule] Synced {Count} admin permission(s): {Codes}",
+            toInsert.Count, string.Join(", ", toInsert.Select(p => p.PermissionCode)));
     }
+
+    private static IEnumerable<string?> ExtractResources(string routePattern)
+    {
+        var segments = routePattern.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var seg in segments)
+        {
+            if (seg.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+                seg.StartsWith('{') || seg.StartsWith(':'))
+                continue;
+            yield return seg.ToLowerInvariant().Replace("-", "_");
+            yield break;
+        }
+    }
+
+    private static string NormalizeResourceName(string resource) =>
+        resource.Replace("_", "-");
 
     private static string BuildKey(string endpoint, string method) =>
         $"{method.ToUpperInvariant()}:{endpoint.ToLowerInvariant()}";
