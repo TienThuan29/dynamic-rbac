@@ -5,12 +5,10 @@ import {
   Crown,
   KeyRound,
   Loader2,
-  LogOut,
   RefreshCw,
   Save,
   Search,
   ShieldCheck,
-  UserRound,
   Users,
 } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -26,6 +24,16 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { PermissionSearchBox } from "@/components/permission-search-box"
+import {
   assignPermissionsWithExpiry,
   getAccountPermissions,
   getAccounts,
@@ -39,8 +47,6 @@ import type {
   UserAccount,
   UserPermissionDetail,
 } from "@/types/api"
-
-const numberFormatter = new Intl.NumberFormat("en-US")
 
 function getInitials(name?: string | null, email?: string) {
   const source = name?.trim() || email || "User"
@@ -96,37 +102,47 @@ function isAdminPermission(permission: Permission | UserPermissionDetail) {
 
 export type UserManagerProps = {
   session: LoginResponse | null
-  onLogout: () => void
 }
 
-export function UserManager({ session, onLogout }: UserManagerProps) {
+export function UserManager({ session }: UserManagerProps) {
   const [accounts, setAccounts] = useState<UserAccount[]>([])
-  const [selectedAccount, setSelectedAccount] = useState<UserAccount | null>(null)
-  const [accountPermissions, setAccountPermissions] = useState<UserPermissionDetail[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [draftPermissionIds, setDraftPermissionIds] = useState<string[]>([])
   const [expiryDate, setExpiryDate] = useState<string>("")
-  const [accountTotal, setAccountTotal] = useState(0)
-  const [permissionTotal, setPermissionTotal] = useState(0)
+  const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [pageSize] = useState(8)
+  const [pageSize] = useState(10)
   const [searchDraft, setSearchDraft] = useState("")
-  const [permissionSearchDraft, setPermissionSearchDraft] = useState("")
   const [search, setSearch] = useState("")
-  const [permissionSearch, setPermissionSearch] = useState("")
-  const [loadingAccounts, setLoadingAccounts] = useState(false)
-  const [loadingPermissions, setLoadingPermissions] = useState(false)
+  const [permFilters, setPermFilters] = useState<{
+    search: string
+    method: string[]
+    type: ("system" | "custom")[]
+    status: ("active" | "inactive")[]
+    resource: string
+  }>({
+    search: "",
+    method: [],
+    type: [],
+    status: [],
+    resource: "",
+  })
+  const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
+  const [permDialogUser, setPermDialogUser] = useState<UserAccount | null>(null)
+  const [accountPermissions, setAccountPermissions] = useState<UserPermissionDetail[]>([])
+  const [loadingPerms, setLoadingPerms] = useState(false)
+  const [permError, setPermError] = useState<string | null>(null)
+
   const token = session?.accessToken ?? ""
-  const selectedAccountId = selectedAccount?.accountId ?? null
-  const accountTotalPages = Math.max(1, Math.ceil(accountTotal / pageSize))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   const assignedPermissionIds = useMemo(
-    () => new Set(accountPermissions.map((permission) => permission.permissionId)),
+    () => new Set(accountPermissions.map((p) => p.permissionId)),
     [accountPermissions]
   )
 
@@ -135,17 +151,13 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
     [draftPermissionIds]
   )
 
-  const visibleSystemPermissions = permissions.filter(
-    (permission) => permission.isSystem
-  ).length
-
   useEffect(() => {
     if (!session) return
 
     let ignore = false
 
-    async function loadAccounts() {
-      setLoadingAccounts(true)
+    async function load() {
+      setLoading(true)
       setError(null)
 
       try {
@@ -153,17 +165,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
 
         if (!ignore) {
           setAccounts(result.items)
-          setAccountTotal(result.totalCount)
-
-          if (result.items.length === 0) {
-            setSelectedAccount(null)
-            setAccountPermissions([])
-            setPermissions([])
-            setDraftPermissionIds([])
-            setPermissionTotal(0)
-          } else if (!selectedAccountId) {
-            setSelectedAccount(result.items[0])
-          }
+          setTotal(result.totalCount)
         }
       } catch (err) {
         if (!ignore) {
@@ -171,82 +173,69 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
         }
       } finally {
         if (!ignore) {
-          setLoadingAccounts(false)
+          setLoading(false)
         }
       }
     }
 
-    loadAccounts()
+    load()
 
     return () => {
       ignore = true
     }
-  }, [page, pageSize, refreshKey, search, selectedAccountId, session, token])
+  }, [page, pageSize, refreshKey, search, session, token])
 
-  useEffect(() => {
-    if (!session || !selectedAccountId) return
+  async function openPermDialog(user: UserAccount) {
+    setPermDialogUser(user)
+    setPermError(null)
+    setExpiryDate("")
+    setLoadingPerms(true)
 
-    let ignore = false
-    const accountId = selectedAccountId
-
-    async function loadPermissionData() {
-      setLoadingPermissions(true)
-      setError(null)
-      setExpiryDate("")
-
-      try {
-        const [assigned, available] = await Promise.all([
-          getAccountPermissions(token, accountId),
-          getPermissions({ token, page: 1, pageSize: 100, search: permissionSearch }),
-        ])
-
-        if (!ignore) {
-          setAccountPermissions(assigned)
-          setPermissions(available.items)
-          setPermissionTotal(available.totalCount)
-          setDraftPermissionIds(assigned.map((permission) => permission.permissionId))
-        }
-      } catch (err) {
-        if (!ignore) {
-          setError(
-            err instanceof Error ? err.message : "Unable to load permissions."
-          )
-        }
-      } finally {
-        if (!ignore) {
-          setLoadingPermissions(false)
-        }
-      }
+    try {
+      const [assigned, available] = await Promise.all([
+        getAccountPermissions(token, user.accountId),
+        getPermissions({
+          token,
+          page: 1,
+          pageSize: 100,
+          search: permFilters.search || undefined,
+          method: permFilters.method.length === 1 ? permFilters.method[0] : undefined,
+          isSystem:
+            permFilters.type.length === 1
+              ? permFilters.type[0] === "system"
+              : undefined,
+          isActive:
+            permFilters.status.length === 1
+              ? permFilters.status[0] === "active"
+              : undefined,
+        }),
+      ])
+      setAccountPermissions(assigned)
+      setPermissions(available.items)
+      setDraftPermissionIds(assigned.map((p) => p.permissionId))
+    } catch (err) {
+      setPermError(err instanceof Error ? err.message : "Unable to load permissions.")
+    } finally {
+      setLoadingPerms(false)
     }
+  }
 
-    loadPermissionData()
-
-    return () => {
-      ignore = true
-    }
-  }, [permissionSearch, refreshKey, selectedAccountId, session, token])
-
-  function handleLogout() {
-    setAccounts([])
-    setSelectedAccount(null)
+  function closePermDialog() {
+    setPermDialogUser(null)
     setAccountPermissions([])
     setPermissions([])
     setDraftPermissionIds([])
-    setExpiryDate("")
-    setAccountTotal(0)
-    setPermissionTotal(0)
-    setNotice(null)
-    setError(null)
-    onLogout()
+    setPermError(null)
+    setPermFilters({ search: "", method: [], type: [], status: [], resource: "" })
   }
 
-  function applyUserSearch() {
+  function applySearch() {
     setSearch(searchDraft.trim())
     setPage(1)
   }
 
-  function applyPermissionSearch() {
-    setPermissionSearch(permissionSearchDraft.trim())
+  function handlePermFiltersChange(newFilters: typeof permFilters) {
+    setPermFilters(newFilters)
   }
 
   function togglePermission(permissionId: string, checked: boolean) {
@@ -254,13 +243,12 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
       if (checked) {
         return current.includes(permissionId) ? current : [...current, permissionId]
       }
-
       return current.filter((id) => id !== permissionId)
     })
   }
 
   async function handleSavePermissions() {
-    if (!session || !selectedAccount) return
+    if (!token || !permDialogUser) return
 
     const nextIds = new Set(draftPermissionIds)
     const idsToAdd = [...nextIds].filter((id) => !assignedPermissionIds.has(id))
@@ -272,14 +260,13 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
     }
 
     setSaving(true)
-    setError(null)
-    setNotice(null)
+    setPermError(null)
 
     try {
       if (idsToAdd.length > 0) {
         await assignPermissionsWithExpiry({
           token,
-          accountId: selectedAccount.accountId,
+          accountId: permDialogUser.accountId,
           permissionIds: idsToAdd,
           expiresAt: expiryDate || null,
         })
@@ -288,16 +275,19 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
       if (idsToRemove.length > 0) {
         await Promise.all(
           idsToRemove.map((permissionId) =>
-            revokePermission(token, selectedAccount.accountId, permissionId)
+            revokePermission(token, permDialogUser.accountId, permissionId)
           )
         )
       }
 
-      setNotice(`${selectedAccount.fullName ?? selectedAccount.email} permissions saved.`)
+      setNotice(
+        `${permDialogUser.fullName ?? permDialogUser.email} permissions updated.`
+      )
       setExpiryDate("")
       setRefreshKey((value) => value + 1)
+      closePermDialog()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save permissions.")
+      setPermError(err instanceof Error ? err.message : "Unable to save permissions.")
     } finally {
       setSaving(false)
     }
@@ -311,10 +301,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
           <CardDescription>AuthModule session required</CardDescription>
         </CardHeader>
         <CardContent className="p-4 pt-0">
-          <Button onClick={onLogout}>
-            <ShieldCheck className="h-4 w-4" />
-            Sign in
-          </Button>
+          <p className="text-sm text-muted-foreground">Sign in to manage users.</p>
         </CardContent>
       </Card>
     )
@@ -346,58 +333,7 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
-            <LogOut className="h-4 w-4" />
-            Sign out
-          </Button>
         </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Accounts
-            </CardTitle>
-            <UserRound className="h-4 w-4 text-sky-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">
-              {numberFormatter.format(accountTotal)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Assigned permissions
-            </CardTitle>
-            <KeyRound className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">
-              {numberFormatter.format(accountPermissions.length)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Permission catalog
-            </CardTitle>
-            <ShieldCheck className="h-4 w-4 text-amber-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">
-              {numberFormatter.format(permissionTotal)}
-            </div>
-            {visibleSystemPermissions > 0 ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {visibleSystemPermissions} system entries visible
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
       </div>
 
       {error ? (
@@ -414,201 +350,233 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
         </div>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(320px,420px)_1fr]">
-        <Card className="rounded-lg">
-          <CardHeader className="p-4">
-            <div className="flex flex-col gap-3">
-              <div>
-                <CardTitle className="text-base">Accounts</CardTitle>
-                <CardDescription>{session.email}</CardDescription>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    className="pl-9"
-                    value={searchDraft}
-                    onChange={(event) => setSearchDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") applyUserSearch()
-                    }}
-                    placeholder="Search users"
-                  />
-                </div>
-                <Button variant="secondary" onClick={applyUserSearch}>
-                  <Search className="h-4 w-4" />
-                  Search
-                </Button>
-              </div>
+      <Card className="rounded-lg">
+        <CardHeader className="p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="text-base">Accounts</CardTitle>
+              <CardDescription>
+                {total > 0 ? `${total} account${total !== 1 ? "s" : ""} total` : "No accounts"}
+              </CardDescription>
             </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            {loadingAccounts ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
-                Loading users
-              </div>
-            ) : accounts.length === 0 ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No users found
-              </div>
-            ) : (
-              <div className="divide-y">
-                {accounts.map((account) => {
-                  const selected = selectedAccount?.accountId === account.accountId
-
-                  return (
-                    <button
-                      key={account.accountId}
-                      className={cn(
-                        "flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40",
-                        selected && "bg-sky-50"
-                      )}
-                      onClick={() => setSelectedAccount(account)}
-                    >
-                      <Avatar className="h-10 w-10">
-                        <AvatarFallback className="bg-sky-100 text-sm font-medium text-sky-700">
-                          {getInitials(account.fullName, account.email)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">
-                          {account.fullName || account.username}
-                        </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {account.email}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <Badge variant="outline">{account.role}</Badge>
-                        <span
-                          className={cn(
-                            "text-xs",
-                            account.isActive ? "text-emerald-600" : "text-destructive"
-                          )}
-                        >
-                          {account.isActive ? "Active" : "Inactive"}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-muted-foreground">
-                Page {page} of {accountTotalPages}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || loadingAccounts}
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= accountTotalPages || loadingAccounts}
-                  onClick={() =>
-                    setPage((value) => Math.min(accountTotalPages, value + 1))
-                  }
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-lg">
-          <CardHeader className="p-4">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <CardTitle className="text-base">
-                  {selectedAccount?.fullName || selectedAccount?.username || "Select user"}
-                </CardTitle>
-                <CardDescription>
-                  {selectedAccount?.email || "No account selected"}
-                </CardDescription>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-muted-foreground whitespace-nowrap">
-                    Expiry:
-                  </label>
-                  <input
-                    type="date"
-                    className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    value={expiryDate}
-                    onChange={(e) => setExpiryDate(e.target.value)}
-                  />
-                </div>
-                <Button
-                  size="sm"
-                  onClick={handleSavePermissions}
-                  disabled={!selectedAccount || saving || loadingPermissions}
-                >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Save permissions
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4 p-4 pt-0">
-            {selectedAccount ? (
-              <div className="grid gap-3 rounded-md border bg-muted/20 p-3 md:grid-cols-3">
-                <div>
-                  <div className="text-xs text-muted-foreground">Username</div>
-                  <div className="mt-1 truncate font-medium">{selectedAccount.username}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Account id</div>
-                  <div className="mt-1 truncate font-mono text-xs">
-                    {selectedAccount.accountId}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Status</div>
-                  <div className="mt-1">
-                    <Badge
-                      className={
-                        selectedAccount.isActive
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : undefined
-                      }
-                      variant={selectedAccount.isActive ? "outline" : "destructive"}
-                    >
-                      {selectedAccount.isActive ? "Active" : "Inactive"}
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
             <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_auto]">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   className="pl-9"
-                  value={permissionSearchDraft}
-                  onChange={(event) => setPermissionSearchDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") applyPermissionSearch()
+                  value={searchDraft}
+                  onChange={(e) => setSearchDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") applySearch()
                   }}
-                  placeholder="Search permissions"
+                  placeholder="Search users..."
                 />
               </div>
-              <Button variant="secondary" onClick={applyPermissionSearch}>
+              <Button variant="secondary" onClick={applySearch}>
                 <Search className="h-4 w-4" />
                 Search
               </Button>
             </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-y bg-muted/50 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 font-medium">User</th>
+                  <th className="px-4 py-3 font-medium">Email</th>
+                  <th className="px-4 py-3 font-medium">Role</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td className="px-4 py-12 text-center text-muted-foreground" colSpan={5}>
+                      <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
+                      Loading users
+                    </td>
+                  </tr>
+                ) : accounts.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-12 text-center text-muted-foreground" colSpan={5}>
+                      No users found
+                    </td>
+                  </tr>
+                ) : (
+                  accounts.map((account) => (
+                    <tr
+                      key={account.accountId}
+                      className="border-b transition-colors hover:bg-muted/30"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-9 w-9">
+                            <AvatarFallback className="bg-sky-100 text-sm font-medium text-sky-700">
+                              {getInitials(account.fullName, account.email)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">
+                              {account.fullName || account.username}
+                            </div>
+                            {account.fullName ? (
+                              <div className="truncate text-xs text-muted-foreground">
+                                {account.username}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-muted-foreground">{account.email}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant="outline">{account.role}</Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={cn(
+                            "text-xs font-medium",
+                            account.isActive ? "text-emerald-600" : "text-destructive"
+                          )}
+                        >
+                          {account.isActive ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openPermDialog(account)}
+                            title="Manage permissions"
+                          >
+                            <KeyRound className="h-4 w-4" />
+                            Permissions
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
-            <div className="max-h-[520px] overflow-y-auto rounded-md border">
-              {loadingPermissions ? (
+          <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {page} of {totalPages} &nbsp;&middot;&nbsp; {total} total
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || loading}
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages || loading}
+                onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Permissions Dialog */}
+      <Dialog
+        open={permDialogUser !== null}
+        onOpenChange={(open) => !open && closePermDialog()}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <Avatar className="h-10 w-10">
+                <AvatarFallback className="bg-sky-100 text-sm font-medium text-sky-700">
+                  {permDialogUser
+                    ? getInitials(permDialogUser.fullName, permDialogUser.email)
+                    : ""}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <DialogTitle>
+                  {permDialogUser?.fullName || permDialogUser?.username || "User"}
+                </DialogTitle>
+                <DialogDescription>{permDialogUser?.email}</DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {permError ? (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              {permError}
+            </div>
+          ) : null}
+
+          <div className="space-y-4">
+            <div className="grid gap-3 rounded-md border bg-muted/20 p-3 md:grid-cols-3">
+              <div>
+                <div className="text-xs text-muted-foreground">Username</div>
+                <div className="mt-1 truncate font-medium">
+                  {permDialogUser?.username ?? "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Role</div>
+                <div className="mt-1">
+                  <Badge variant="outline">{permDialogUser?.role}</Badge>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Status</div>
+                <div className="mt-1">
+                  <Badge
+                    className={
+                      permDialogUser?.isActive
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : undefined
+                    }
+                    variant={permDialogUser?.isActive ? "outline" : "destructive"}
+                  >
+                    {permDialogUser?.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-0">
+                <PermissionSearchBox
+                  value={permFilters}
+                  onChange={handlePermFiltersChange}
+                  loading={loadingPerms}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="whitespace-nowrap text-sm text-muted-foreground">
+                  Expiry:
+                </label>
+                <input
+                  type="date"
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  value={expiryDate}
+                  onChange={(e) => setExpiryDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="max-h-[400px] overflow-y-auto rounded-md border">
+              {loadingPerms ? (
                 <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                   <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
                   Loading permissions
@@ -673,7 +641,9 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
                             <Badge className={methodClass(permission.method)}>
                               {permission.method ?? "ANY"}
                             </Badge>
-                            <span className="font-mono">{permission.endpoint ?? "All endpoints"}</span>
+                            <span className="font-mono">
+                              {permission.endpoint ?? "All endpoints"}
+                            </span>
                           </div>
                           {permission.description ? (
                             <p className="mt-1 text-xs text-muted-foreground">
@@ -690,27 +660,40 @@ export function UserManager({ session, onLogout }: UserManagerProps) {
 
             {accountPermissions.length > 0 ? (
               <div className="rounded-md border bg-muted/20 p-3">
-                <div className="mb-2 text-sm font-medium">Current assignments</div>
+                <div className="mb-2 text-sm font-medium">
+                  Current assignments ({accountPermissions.length})
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {accountPermissions.slice(0, 8).map((permission) => (
-                    <Badge key={permission.permissionId} variant="outline" className="gap-1">
-                      {permission.permissionCode ?? permission.method ?? "Permission"}
+                  {accountPermissions.map((p) => (
+                    <Badge key={p.permissionId} variant="outline" className="gap-1">
+                      {p.permissionCode ?? p.method ?? "Permission"}
                       <span className="text-muted-foreground">
-                        {formatDate(permission.expiresAt)}
+                        {formatDate(p.expiresAt)}
                       </span>
                     </Badge>
                   ))}
-                  {accountPermissions.length > 8 ? (
-                    <Badge variant="secondary">
-                      +{accountPermissions.length - 8} more
-                    </Badge>
-                  ) : null}
                 </div>
               </div>
             ) : null}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" type="button">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button onClick={handleSavePermissions} disabled={saving || loadingPerms}>
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              Save permissions
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

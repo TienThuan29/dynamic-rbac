@@ -28,13 +28,25 @@ public class PermissionController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? search = null,
+        [FromQuery] string? method = null,
+        [FromQuery] bool? isSystem = null,
+        [FromQuery] bool? isActive = null,
+        [FromQuery] string? resource = null,
         CancellationToken ct = default)
     {
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
-        var result = await _permissionService.GetAllAsync(page, pageSize, search, ct);
+        var result = await _permissionService.GetAllAsync(page, pageSize, search, method, isSystem, isActive, resource, ct);
         return Ok(result);
+    }
+
+    [HttpGet("resources")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    public async Task<ActionResult<List<string>>> GetDistinctResources(CancellationToken ct = default)
+    {
+        var resources = await _permissionService.GetDistinctResourcesAsync(ct);
+        return Ok(resources);
     }
 
     [HttpGet("{id:guid}")]
