@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { Toaster } from "react-hot-toast"
 import { siteConfig, type SitePageId } from "@/configs/site"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { LoginPage } from "@/pages/LoginPage"
@@ -71,21 +72,27 @@ function App() {
 
   if (resolvedPageId === "dashboard") {
     return (
-      <DashboardPage
-        session={session}
-        onLogout={handleLogout}
-        onNavigate={handleNavigate}
-      />
+      <>
+        <Toaster position="top-right" />
+        <DashboardPage
+          session={session}
+          onLogout={handleLogout}
+          onNavigate={handleNavigate}
+        />
+      </>
     )
   }
 
   return (
-    <LoginPage
-      session={session}
-      onLogin={handleLogin}
-      onLogout={handleLogout}
-      onNavigate={handleNavigate}
-    />
+    <>
+      <Toaster position="top-right" />
+      <LoginPage
+        session={session}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+        onNavigate={handleNavigate}
+      />
+    </>
   )
 }
 

@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { AlertCircle, Loader2, LogIn } from "lucide-react"
-import { login } from "@/api/api"
+import toast from "react-hot-toast"
+import { Loader2, LogIn } from "lucide-react"
+import { login } from "@/api/auth.api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -24,12 +25,10 @@ export function LoginPage({
   const [email, setEmail] = useState("")
   const [entraIdObjectId, setEntraIdObjectId] = useState("")
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSaving(true)
-    setError(null)
 
     try {
       onLogin(
@@ -39,7 +38,7 @@ export function LoginPage({
         })
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to sign in.")
+      toast.error(err instanceof Error ? err.message : "Unable to sign in.")
     } finally {
       setSaving(false)
     }
@@ -78,13 +77,6 @@ export function LoginPage({
           <CardDescription>Enter your credentials to continue</CardDescription>
         </CardHeader>
         <CardContent className="p-5 pt-0">
-          {error ? (
-            <div className="mb-4 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          ) : null}
-
           <form className="grid gap-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <Label htmlFor="login-email">Email</Label>

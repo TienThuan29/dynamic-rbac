@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
+import toast from "react-hot-toast"
 import {
   AlertCircle,
-  CheckCircle2,
   Crown,
   Edit2,
   Loader2,
@@ -37,7 +37,8 @@ import {
   getPermissionResources,
   getPermissions,
   updatePermission,
-} from "@/api/api"
+} from "@/api/permission.api"
+import { permissionScopeLabel } from "@/lib/permission.util"
 import { cn } from "@/lib/utils"
 import type { LoginResponse, Permission, UpdatePermissionPayload } from "@/types/api"
 
@@ -101,6 +102,7 @@ interface DeleteDialogState {
   permission: Permission | null
 }
 
+
 export function PermissionManager({ session }: PermissionManagerProps) {
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [total, setTotal] = useState(0)
@@ -112,12 +114,12 @@ export function PermissionManager({ session }: PermissionManagerProps) {
     type: [],
     status: [],
     resource: "",
+    isAdmin: "",
   })
   const [resourceOptions, setResourceOptions] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
 
   const [editDialog, setEditDialog] = useState<EditDialogState>({
     permission: null,
@@ -127,7 +129,6 @@ export function PermissionManager({ session }: PermissionManagerProps) {
     isActive: true,
   })
   const [saving, setSaving] = useState(false)
-  const [editError, setEditError] = useState<string | null>(null)
 
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>({ permission: null })
   const [deleting, setDeleting] = useState(false)
@@ -172,7 +173,13 @@ export function PermissionManager({ session }: PermissionManagerProps) {
         })
 
         if (!ignore) {
-          setPermissions(result.items)
+          const items =
+            filters.isAdmin === "admin"
+              ? result.items.filter((p) => p.permissionCode?.endsWith(":admin"))
+              : filters.isAdmin === "non-admin"
+              ? result.items.filter((p) => !p.permissionCode?.endsWith(":admin"))
+              : result.items
+          setPermissions(items)
           setTotal(result.totalCount)
         }
       } catch (err) {
@@ -206,7 +213,6 @@ export function PermissionManager({ session }: PermissionManagerProps) {
       description: permission.description ?? "",
       isActive: permission.isActive,
     })
-    setEditError(null)
   }
 
   function closeEditDialog() {
@@ -217,7 +223,6 @@ export function PermissionManager({ session }: PermissionManagerProps) {
       description: "",
       isActive: true,
     })
-    setEditError(null)
   }
 
   async function handleSaveEdit() {
@@ -234,15 +239,14 @@ export function PermissionManager({ session }: PermissionManagerProps) {
     }
 
     setSaving(true)
-    setEditError(null)
 
     try {
       await updatePermission(token, editDialog.permission.id, payload)
-      setNotice(`Permission "${permissionTitle(editDialog.permission)}" updated.`)
+      toast.success(`Permission "${permissionTitle(editDialog.permission)}" updated.`)
       closeEditDialog()
       setRefreshKey((value) => value + 1)
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Unable to update permission.")
+      toast.error(err instanceof Error ? err.message : "Unable to update permission.")
     } finally {
       setSaving(false)
     }
@@ -263,11 +267,11 @@ export function PermissionManager({ session }: PermissionManagerProps) {
 
     try {
       await deletePermission(token, deleteDialog.permission.id)
-      setNotice(`Permission deleted.`)
+      toast.success(`Permission deleted.`)
       closeDeleteDialog()
       setRefreshKey((value) => value + 1)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to delete permission.")
+      toast.error(err instanceof Error ? err.message : "Unable to delete permission.")
       closeDeleteDialog()
     } finally {
       setDeleting(false)
@@ -322,13 +326,6 @@ export function PermissionManager({ session }: PermissionManagerProps) {
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertCircle className="h-4 w-4" />
           {error}
-        </div>
-      ) : null}
-
-      {notice ? (
-        <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" />
-          {notice}
         </div>
       ) : null}
 
@@ -437,7 +434,7 @@ export function PermissionManager({ session }: PermissionManagerProps) {
                                       variant="outline"
                                       className="border-violet-200 bg-violet-50 text-violet-700 text-xs"
                                     >
-                                      Admin wildcard
+                                      Admin
                                     </Badge>
                                   )}
                                 </div>
@@ -459,11 +456,7 @@ export function PermissionManager({ session }: PermissionManagerProps) {
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            {permission.endpoint ? (
-                              <code className="font-mono text-xs">{permission.endpoint}</code>
-                            ) : (
-                              <span className="text-xs text-muted-foreground italic">All endpoints</span>
-                            )}
+                            <code className="font-mono text-xs">{permissionScopeLabel(permission)}</code>
                           </td>
                           <td className="px-4 py-3">
                             <span
@@ -537,153 +530,257 @@ export function PermissionManager({ session }: PermissionManagerProps) {
         </CardContent>
       </Card>
 
-      {/* Edit Dialog */}
-      <Dialog
-        open={editDialog.permission !== null}
-        onOpenChange={(open) => {
-          if (!open) closeEditDialog()
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Permission</DialogTitle>
-            <DialogDescription>
-              Update metadata for{" "}
-              <code className="rounded bg-muted px-1 font-mono text-xs">
-                {editDialog.permission?.permissionCode ?? editDialog.permission?.id}
-              </code>
-            </DialogDescription>
-          </DialogHeader>
+      <EditPermissionDialog
+        state={editDialog}
+        saving={saving}
+        onChange={setEditDialog}
+        onSave={handleSaveEdit}
+        onClose={closeEditDialog}
+      />
 
-          {editDialog.permission?.isSystem && (
-            <div className="rounded-md border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              This is a system permission — code and public flag cannot be changed.
+      <DeletePermissionDialog
+        state={deleteDialog}
+        deleting={deleting}
+        onConfirm={handleConfirmDelete}
+        onClose={closeDeleteDialog}
+      />
+    </div>
+  )
+}
+
+
+// ─── Edit Dialog ────────────────────────────────────────────────────────────
+
+interface EditPermissionDialogProps {
+  state: EditDialogState
+  saving: boolean
+  onChange: (state: EditDialogState) => void
+  onSave: () => void
+  onClose: () => void
+}
+
+function EditPermissionDialog({
+  state,
+  saving,
+  onChange,
+  onSave,
+  onClose,
+}: EditPermissionDialogProps) {
+  const perm = state.permission
+  const isAdmin = perm ? isAdminPermission(perm) : false
+
+  return (
+    <Dialog
+      open={perm !== null}
+      onOpenChange={(open) => { if (!open) onClose() }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Shield className="h-4 w-4 text-sky-600" />
+            Edit Permission
+          </DialogTitle>
+          <DialogDescription>
+            Modify metadata for{" "}
+            <code className="rounded bg-muted px-1 font-mono text-xs">
+              {perm?.permissionCode ?? perm?.id}
+            </code>
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-[1fr_1.6fr] gap-5 pt-1">
+          {/* ── Left: read-only current details ── */}
+          <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Current Details
+            </p>
+
+            <div className="space-y-3 text-sm">
+              <div>
+                <p className="mb-0.5 text-xs text-muted-foreground">Code</p>
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs break-all">
+                  {perm?.permissionCode ?? "—"}
+                </code>
+              </div>
+
+              <div>
+                <p className="mb-0.5 text-xs text-muted-foreground">Method</p>
+                {perm?.method ? (
+                  <Badge className={cn("text-xs", methodClass(perm.method))}>
+                    {perm.method}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">ANY</span>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-0.5 text-xs text-muted-foreground">Endpoint / Scope</p>
+                <code className="font-mono text-xs text-foreground/80">
+                  {perm ? permissionScopeLabel(perm) : "—"}
+                </code>
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">Flags</p>
+                <div className="flex flex-wrap gap-1">
+                  {perm?.isSystem && (
+                    <Badge variant="secondary" className="text-xs">System</Badge>
+                  )}
+                  {perm?.isPublic && (
+                    <Badge variant="outline" className="text-xs">Public</Badge>
+                  )}
+                  {isAdmin && (
+                    <Badge
+                      variant="outline"
+                      className="border-violet-200 bg-violet-50 text-violet-700 text-xs"
+                    >
+                      Admin
+                    </Badge>
+                  )}
+                  {!perm?.isSystem && !perm?.isPublic && !isAdmin && (
+                    <span className="text-xs text-muted-foreground">None</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-0.5 text-xs text-muted-foreground">Created</p>
+                <p className="text-xs">{formatDate(perm?.createdAt)}</p>
+              </div>
             </div>
-          )}
 
-          {editError ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {editError}
-            </div>
-          ) : null}
+            {perm?.isSystem && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                System permission — code cannot be changed.
+              </div>
+            )}
+          </div>
 
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
+          {/* ── Right: edit form ── */}
+          <div className="space-y-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Edit Fields
+            </p>
+
+            <div className="grid gap-1.5">
               <Label htmlFor="perm-name">Permission Name</Label>
               <Input
                 id="perm-name"
-                value={editDialog.permissionName}
-                onChange={(e) =>
-                  setEditDialog((prev) => ({
-                    ...prev,
-                    permissionName: e.target.value,
-                  }))
-                }
+                value={state.permissionName}
+                onChange={(e) => onChange({ ...state, permissionName: e.target.value })}
                 placeholder="e.g. View products"
-                disabled={editDialog.permission?.isSystem}
               />
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid gap-1.5">
               <Label htmlFor="perm-code">Permission Code</Label>
               <Input
                 id="perm-code"
-                value={editDialog.permissionCode}
-                onChange={(e) =>
-                  setEditDialog((prev) => ({
-                    ...prev,
-                    permissionCode: e.target.value,
-                  }))
-                }
+                value={state.permissionCode}
+                onChange={(e) => onChange({ ...state, permissionCode: e.target.value })}
                 placeholder="e.g. products:read"
-                disabled={editDialog.permission?.isSystem}
+                disabled={perm?.isSystem}
               />
+              {perm?.isSystem && (
+                <p className="text-xs text-muted-foreground">
+                  Cannot edit code for system permissions.
+                </p>
+              )}
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid gap-1.5">
               <Label htmlFor="perm-desc">Description</Label>
               <Textarea
                 id="perm-desc"
-                value={editDialog.description}
-                onChange={(e) =>
-                  setEditDialog((prev) => ({
-                    ...prev,
-                    description: e.target.value,
-                  }))
-                }
+                value={state.description}
+                onChange={(e) => onChange({ ...state, description: e.target.value })}
                 placeholder="Optional description..."
-                className="min-h-20 resize-none"
-                disabled={editDialog.permission?.isSystem}
+                className="min-h-22.5 resize-none"
               />
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
               <input
                 type="checkbox"
                 id="perm-active"
                 className="h-4 w-4 rounded border-input accent-primary"
-                checked={editDialog.isActive}
-                onChange={(e) =>
-                  setEditDialog((prev) => ({
-                    ...prev,
-                    isActive: e.target.checked,
-                  }))
-                }
+                checked={state.isActive}
+                onChange={(e) => onChange({ ...state, isActive: e.target.checked })}
               />
-              <Label htmlFor="perm-active" className="font-normal">
-                Active
-              </Label>
+              <div>
+                <Label htmlFor="perm-active" className="cursor-pointer font-medium">
+                  Active
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {state.isActive
+                    ? "This permission is currently active."
+                    : "This permission is disabled."}
+                </p>
+              </div>
             </div>
           </div>
+        </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={closeEditDialog}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveEdit} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <DialogFooter className="pt-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={onSave} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={deleteDialog.permission !== null}
-        onOpenChange={(open) => {
-          if (!open) closeDeleteDialog()
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete Permission</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete{" "}
-              <strong>
-                {deleteDialog.permission
-                  ? permissionTitle(deleteDialog.permission)
-                  : "this permission"}
-              </strong>
-              ? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeDeleteDialog}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleConfirmDelete}
-              disabled={deleting}
-            >
-              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+// ─── Delete Dialog ───────────────────────────────────────────────────────────
+
+interface DeletePermissionDialogProps {
+  state: DeleteDialogState
+  deleting: boolean
+  onConfirm: () => void
+  onClose: () => void
+}
+
+function DeletePermissionDialog({
+  state,
+  deleting,
+  onConfirm,
+  onClose,
+}: DeletePermissionDialogProps) {
+  return (
+    <Dialog
+      open={state.permission !== null}
+      onOpenChange={(open) => { if (!open) onClose() }}
+    >
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete Permission</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete{" "}
+            <strong>
+              {state.permission ? permissionTitle(state.permission) : "this permission"}
+            </strong>
+            ? This action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={deleting}
+          >
+            {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

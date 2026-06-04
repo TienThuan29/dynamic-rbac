@@ -18,7 +18,9 @@ namespace AuthModule.Controllers;
 [ApiController]
 [Route("api/gatekeeper")]
 [AllowAnonymous]
-[PermissionMeta(Public = PublicMode.Public, IsSystem = true)]
+[PermissionMeta(Public = PublicMode.Public, IsSystem = true,
+    PermissionName = "Gatekeeper Check Access",
+    Description = "Internal endpoint used by the API Gateway to validate JWTs and check user permissions before forwarding requests to downstream services.")]
 public class GatekeeperController : ControllerBase
 {
     private readonly AuthDbContext _dbContext;
@@ -117,13 +119,18 @@ public class GatekeeperController : ControllerBase
         }
 
         // ── 5. Check if the endpoint is public ────────────────────────────────
-        var permission = await _dbContext.Permissions
+        // Fetch active permissions for this HTTP method (small set), then match
+        // the actual path against stored route patterns which may contain {param}
+        // placeholders — e.g. /api/products/{id} must match /api/products/743bcf48-...
+        var methodCandidates = await _dbContext.Permissions
             .AsNoTracking()
-            .FirstOrDefaultAsync(
-                p => p.IsActive &&
-                     EF.Functions.ILike(p.Endpoint ?? "", normalizedPath) &&
-                     EF.Functions.ILike(p.Method ?? "", request.Method),
-                ct);
+            .Where(p => p.IsActive &&
+                        p.Endpoint != null &&
+                        EF.Functions.ILike(p.Method ?? "", request.Method))
+            .ToListAsync(ct);
+
+        var permission = methodCandidates.FirstOrDefault(p =>
+            RoutePatternMatches(p.Endpoint!, normalizedPath));
 
         if (permission == null)
         {
@@ -166,7 +173,7 @@ public class GatekeeperController : ControllerBase
             return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
         }
 
-        // Fallback: check [resource]:admin wildcard
+        // Fallback: check [resource]:admin
         var resource = ExtractResource(normalizedPath);
         if (resource is not null)
         {
@@ -183,7 +190,7 @@ public class GatekeeperController : ControllerBase
             if (hasAdminPermission)
             {
                 _logger.LogDebug(
-                    "Gatekeeper: account {AccountId} allowed (admin wildcard {AdminCode}) for {Method} {Path}",
+                    "Gatekeeper: account {AccountId} allowed (admin {AdminCode}) for {Method} {Path}",
                     accountId, adminCode, request.Method, normalizedPath);
                 return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
             }
@@ -236,6 +243,30 @@ public class GatekeeperController : ControllerBase
             validationException = ex;
             return new ClaimsPrincipal();
         }
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="path"/> matches the stored route pattern.
+    /// Segments wrapped in { } are treated as single-segment wildcards, so
+    /// /api/products/{id} matches /api/products/743bcf48-ea9d-4adf-a6ab-9a1218305e34.
+    /// </summary>
+    private static bool RoutePatternMatches(string pattern, string path)
+    {
+        var patSegs  = pattern.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var pathSegs = path.Split('/',    StringSplitOptions.RemoveEmptyEntries);
+
+        if (patSegs.Length != pathSegs.Length) return false;
+
+        for (var i = 0; i < patSegs.Length; i++)
+        {
+            // {param} — wildcard, matches any single segment
+            if (patSegs[i].StartsWith('{') && patSegs[i].EndsWith('}')) continue;
+
+            if (!patSegs[i].Equals(pathSegs[i], StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>

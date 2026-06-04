@@ -23,7 +23,9 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpGet("accounts")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "List User Accounts",
+        Description = "Retrieve a paginated list of all user accounts with optional search.")]
     public async Task<ActionResult<PagedResult<UserAccountDto>>> GetAccounts(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -38,7 +40,9 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpGet("account/{accountId:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Get User Permissions",
+        Description = "Retrieve all permissions currently assigned to a specific user account.")]
     public async Task<ActionResult<List<UserPermissionDetailDto>>> GetByAccount(
         Guid accountId,
         CancellationToken ct = default)
@@ -48,7 +52,9 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpPost("assign")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Assign Permissions to User",
+        Description = "Assign one or more permissions to a user account, with optional expiry.")]
     public async Task<ActionResult<List<UserPermissionDetailDto>>> Assign(
         [FromBody] AssignUserPermissionDto dto,
         CancellationToken ct = default)
@@ -67,7 +73,9 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpPost("assign-by-group")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Assign Permission Group to User",
+        Description = "Assign all permissions belonging to a permission group to a user account.")]
     public async Task<ActionResult<List<UserPermissionDetailDto>>> AssignByGroup(
         [FromBody] AssignByGroupDto dto,
         CancellationToken ct = default)
@@ -94,7 +102,9 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpDelete("revoke/{accountId:guid}/{permissionId:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Revoke User Permission",
+        Description = "Revoke a specific permission from a user account.")]
     public async Task<ActionResult> Revoke(
         Guid accountId,
         Guid permissionId,
@@ -111,7 +121,9 @@ public class UserPermissionController : ControllerBase
     }
 
     [HttpDelete("revoke-group/{accountId:guid}/{permissionGroupId:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Revoke Permission Group from User",
+        Description = "Revoke all permissions belonging to a group from a user account.")]
     public async Task<ActionResult> RevokeByGroup(
         Guid accountId,
         Guid permissionGroupId,

@@ -12,6 +12,7 @@ export type PermissionFilters = {
   type: ("system" | "custom")[]
   status: ("active" | "inactive")[]
   resource: string
+  isAdmin: "" | "admin" | "non-admin"
 }
 
 export type PermissionSearchBoxProps = {
@@ -29,6 +30,7 @@ const DEFAULT_FILTERS: PermissionFilters = {
   type: [],
   status: [],
   resource: "",
+  isAdmin: "",
 }
 
 const METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const
@@ -168,8 +170,9 @@ export function PermissionSearchBox({
       value.method.length > 0 ||
       value.type.length > 0 ||
       value.status.length > 0 ||
-      value.resource !== "",
-    [value.method, value.type, value.status, value.resource]
+      value.resource !== "" ||
+      value.isAdmin !== "",
+    [value.method, value.type, value.status, value.resource, value.isAdmin]
   )
 
   function toggleMethod(m: string) {
@@ -256,6 +259,17 @@ export function PermissionSearchBox({
           </select>
         )}
 
+        {/* Admin filter select */}
+        <select
+          className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+          value={value.isAdmin}
+          onChange={(e) => onChange({ ...value, isAdmin: e.target.value as "" | "admin" | "non-admin" })}
+        >
+          <option value="">All scopes</option>
+          <option value="admin">Admin wildcard</option>
+          <option value="non-admin">Non-admin</option>
+        </select>
+
         {/* Filter dropdowns */}
         <FilterDropdown
           label="Method"
@@ -284,10 +298,10 @@ export function PermissionSearchBox({
         {/* Clear all */}
         {hasActiveFilters && (
           <Button
-            variant="ghost"
+            variant="destructive"
             size="sm"
             onClick={clearAll}
-            className="h-8 text-xs text-muted-foreground"
+            className="h-8 text-xs"
           >
             Clear all
           </Button>
@@ -300,6 +314,12 @@ export function PermissionSearchBox({
           <FilterChip
             label={`Resource: ${value.resource}`}
             onRemove={() => onChange({ ...value, resource: "" })}
+          />
+        )}
+        {value.isAdmin && (
+          <FilterChip
+            label={value.isAdmin === "admin" ? "Scope: Admin" : "Scope: Non-admin"}
+            onRemove={() => onChange({ ...value, isAdmin: "" })}
           />
         )}
         {value.method.map((m) => (

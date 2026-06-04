@@ -26,7 +26,9 @@ public class AuthController : ControllerBase
 
     [HttpPost("login")]
     [AllowAnonymous]
-    [PermissionMeta(Public = PublicMode.Public, IsSystem = true)]
+    [PermissionMeta(Public = PublicMode.Public, IsSystem = true,
+        PermissionName = "Login",
+        Description = "Authenticate via Microsoft Entra ID and receive a JWT access token with the account's assigned permissions.")]
     public async Task<ActionResult<LoginResponseDto>> Login(
         [FromBody] LoginDto loginDto,
         CancellationToken cancellationToken)
