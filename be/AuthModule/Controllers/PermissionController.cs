@@ -23,7 +23,9 @@ public class PermissionController : ControllerBase
     }
 
     [HttpGet]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "List Permissions",
+        Description = "Retrieve a paginated list of all permissions with optional filters.")]
     public async Task<ActionResult<PagedResult<PermissionDto>>> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -42,7 +44,9 @@ public class PermissionController : ControllerBase
     }
 
     [HttpGet("resources")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "List Permission Resources",
+        Description = "Retrieve the distinct resource prefixes extracted from all permission codes.")]
     public async Task<ActionResult<List<string>>> GetDistinctResources(CancellationToken ct = default)
     {
         var resources = await _permissionService.GetDistinctResourcesAsync(ct);
@@ -50,7 +54,9 @@ public class PermissionController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Get Permission",
+        Description = "Retrieve the details of a single permission by its ID.")]
     public async Task<ActionResult<PermissionDto>> GetById(Guid id, CancellationToken ct = default)
     {
         var result = await _permissionService.GetByIdAsync(id, ct);
@@ -60,7 +66,9 @@ public class PermissionController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Update Permission",
+        Description = "Update the name, description, code, or public flag of an existing permission.")]
     public async Task<ActionResult<PermissionDto>> Update(
         Guid id,
         [FromBody] UpdatePermissionDto dto,
@@ -85,7 +93,9 @@ public class PermissionController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true)]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Delete Permission",
+        Description = "Permanently delete a permission record by its ID.")]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         try

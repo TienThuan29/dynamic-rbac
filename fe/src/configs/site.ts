@@ -67,9 +67,9 @@ const defaultPageId: SitePageId = "login"
 const defaultDashboardSectionId: DashboardSectionId = "products"
 
 export const siteConfig = {
-  name: "Dynamic Permission Demo",
-  description: "Azure demo dashboard",
-  entities: "Product, Account, User, Permission",
+  name: "Permission Demo",
+  description: "",
+  entities: "",
   defaultPageId,
   defaultDashboardSectionId,
   pages,

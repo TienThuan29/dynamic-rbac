@@ -16,6 +16,14 @@ export function getProducts(query: {
   )
 }
 
+export function getProduct(token: string | null, id: string) {
+  return request<Product>(
+    `/products/${id}`,
+    { token },
+    MAIN_API_BASE_URL
+  )
+}
+
 export function createProduct(token: string | null, payload: ProductPayload) {
   return request<Product>(
     "/products",

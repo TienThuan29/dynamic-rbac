@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
+import toast from "react-hot-toast"
 import {
   AlertCircle,
-  CheckCircle2,
   Crown,
   KeyRound,
   Loader2,
@@ -37,9 +37,10 @@ import {
   assignPermissionsWithExpiry,
   getAccountPermissions,
   getAccounts,
-  getPermissions,
   revokePermission,
-} from "@/api/api"
+} from "@/api/auth.api"
+import { getPermissions, getPermissionResources } from "@/api/permission.api"
+import { permissionScopeLabel } from "@/lib/permission.util"
 import { cn } from "@/lib/utils"
 import type {
   LoginResponse,
@@ -100,6 +101,9 @@ function isAdminPermission(permission: Permission | UserPermissionDetail) {
   )
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export type UserManagerProps = {
   session: LoginResponse | null
 }
@@ -120,23 +124,24 @@ export function UserManager({ session }: UserManagerProps) {
     type: ("system" | "custom")[]
     status: ("active" | "inactive")[]
     resource: string
+    isAdmin: "" | "admin" | "non-admin"
   }>({
     search: "",
     method: [],
     type: [],
     status: [],
     resource: "",
+    isAdmin: "",
   })
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
 
   const [permDialogUser, setPermDialogUser] = useState<UserAccount | null>(null)
   const [accountPermissions, setAccountPermissions] = useState<UserPermissionDetail[]>([])
+  const [resourceOptions, setResourceOptions] = useState<string[]>([])
   const [loadingPerms, setLoadingPerms] = useState(false)
-  const [permError, setPermError] = useState<string | null>(null)
 
   const token = session?.accessToken ?? ""
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -150,6 +155,49 @@ export function UserManager({ session }: UserManagerProps) {
     () => new Set(draftPermissionIds),
     [draftPermissionIds]
   )
+
+  const filteredPermissions = useMemo(() => {
+    let result = permissions
+
+    if (permFilters.search) {
+      const q = permFilters.search.toLowerCase()
+      result = result.filter(
+        (p) =>
+          p.permissionName?.toLowerCase().includes(q) ||
+          p.permissionCode?.toLowerCase().includes(q) ||
+          p.endpoint?.toLowerCase().includes(q) ||
+          p.description?.toLowerCase().includes(q)
+      )
+    }
+
+    if (permFilters.method.length > 0) {
+      result = result.filter((p) => p.method && permFilters.method.includes(p.method))
+    }
+
+    if (permFilters.type.length === 1) {
+      const wantSystem = permFilters.type[0] === "system"
+      result = result.filter((p) => p.isSystem === wantSystem)
+    }
+
+    if (permFilters.status.length === 1) {
+      const wantActive = permFilters.status[0] === "active"
+      result = result.filter((p) => p.isActive === wantActive)
+    }
+
+    if (permFilters.resource) {
+      result = result.filter((p) =>
+        p.permissionCode?.startsWith(permFilters.resource + ":")
+      )
+    }
+
+    if (permFilters.isAdmin === "admin") {
+      result = result.filter((p) => p.permissionCode?.endsWith(":admin"))
+    } else if (permFilters.isAdmin === "non-admin") {
+      result = result.filter((p) => !p.permissionCode?.endsWith(":admin"))
+    }
+
+    return result
+  }, [permissions, permFilters])
 
   useEffect(() => {
     if (!session) return
@@ -187,34 +235,21 @@ export function UserManager({ session }: UserManagerProps) {
 
   async function openPermDialog(user: UserAccount) {
     setPermDialogUser(user)
-    setPermError(null)
     setExpiryDate("")
     setLoadingPerms(true)
 
     try {
-      const [assigned, available] = await Promise.all([
+      const [assigned, available, resources] = await Promise.all([
         getAccountPermissions(token, user.accountId),
-        getPermissions({
-          token,
-          page: 1,
-          pageSize: 100,
-          search: permFilters.search || undefined,
-          method: permFilters.method.length === 1 ? permFilters.method[0] : undefined,
-          isSystem:
-            permFilters.type.length === 1
-              ? permFilters.type[0] === "system"
-              : undefined,
-          isActive:
-            permFilters.status.length === 1
-              ? permFilters.status[0] === "active"
-              : undefined,
-        }),
+        getPermissions({ token, page: 1, pageSize: 100 }),
+        getPermissionResources(token),
       ])
       setAccountPermissions(assigned)
       setPermissions(available.items)
+      setResourceOptions(resources)
       setDraftPermissionIds(assigned.map((p) => p.permissionId))
     } catch (err) {
-      setPermError(err instanceof Error ? err.message : "Unable to load permissions.")
+      toast.error(err instanceof Error ? err.message : "Unable to load permissions.")
     } finally {
       setLoadingPerms(false)
     }
@@ -224,9 +259,9 @@ export function UserManager({ session }: UserManagerProps) {
     setPermDialogUser(null)
     setAccountPermissions([])
     setPermissions([])
+    setResourceOptions([])
     setDraftPermissionIds([])
-    setPermError(null)
-    setPermFilters({ search: "", method: [], type: [], status: [], resource: "" })
+    setPermFilters({ search: "", method: [], type: [], status: [], resource: "", isAdmin: "" })
   }
 
   function applySearch() {
@@ -255,12 +290,11 @@ export function UserManager({ session }: UserManagerProps) {
     const idsToRemove = [...assignedPermissionIds].filter((id) => !nextIds.has(id))
 
     if (idsToAdd.length === 0 && idsToRemove.length === 0) {
-      setNotice("Permissions already up to date.")
+      toast("Permissions already up to date.")
       return
     }
 
     setSaving(true)
-    setPermError(null)
 
     try {
       if (idsToAdd.length > 0) {
@@ -280,14 +314,14 @@ export function UserManager({ session }: UserManagerProps) {
         )
       }
 
-      setNotice(
+      toast.success(
         `${permDialogUser.fullName ?? permDialogUser.email} permissions updated.`
       )
       setExpiryDate("")
       setRefreshKey((value) => value + 1)
       closePermDialog()
     } catch (err) {
-      setPermError(err instanceof Error ? err.message : "Unable to save permissions.")
+      toast.error(err instanceof Error ? err.message : "Unable to save permissions.")
     } finally {
       setSaving(false)
     }
@@ -340,13 +374,6 @@ export function UserManager({ session }: UserManagerProps) {
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertCircle className="h-4 w-4" />
           {error}
-        </div>
-      ) : null}
-
-      {notice ? (
-        <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" />
-          {notice}
         </div>
       ) : null}
 
@@ -492,90 +519,219 @@ export function UserManager({ session }: UserManagerProps) {
         </CardContent>
       </Card>
 
-      {/* Permissions Dialog */}
-      <Dialog
-        open={permDialogUser !== null}
-        onOpenChange={(open) => !open && closePermDialog()}
-      >
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <Avatar className="h-10 w-10">
-                <AvatarFallback className="bg-sky-100 text-sm font-medium text-sky-700">
-                  {permDialogUser
-                    ? getInitials(permDialogUser.fullName, permDialogUser.email)
-                    : ""}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <DialogTitle>
-                  {permDialogUser?.fullName || permDialogUser?.username || "User"}
-                </DialogTitle>
-                <DialogDescription>{permDialogUser?.email}</DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
+      <UserPermissionDialog
+        user={permDialogUser}
+        permissions={filteredPermissions}
+        accountPermissions={accountPermissions}
+        assignedPermissionIds={assignedPermissionIds}
+        draftPermissionSet={draftPermissionSet}
+        permFilters={permFilters}
+        resourceOptions={resourceOptions}
+        expiryDate={expiryDate}
+        loadingPerms={loadingPerms}
+        saving={saving}
+        onClose={closePermDialog}
+        onFiltersChange={handlePermFiltersChange}
+        onTogglePermission={togglePermission}
+        onExpiryChange={setExpiryDate}
+        onSave={handleSavePermissions}
+      />
+    </div>
+  )
+}
 
-          {permError ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {permError}
-            </div>
-          ) : null}
 
-          <div className="space-y-4">
-            <div className="grid gap-3 rounded-md border bg-muted/20 p-3 md:grid-cols-3">
-              <div>
-                <div className="text-xs text-muted-foreground">Username</div>
-                <div className="mt-1 truncate font-medium">
-                  {permDialogUser?.username ?? "—"}
+// ─── User Permission Dialog ─────────────────────────────────────────────────
+
+interface UserPermissionDialogProps {
+  user: UserAccount | null
+  permissions: Permission[]
+  accountPermissions: UserPermissionDetail[]
+  assignedPermissionIds: Set<string>
+  draftPermissionSet: Set<string>
+  permFilters: {
+    search: string
+    method: string[]
+    type: ("system" | "custom")[]
+    status: ("active" | "inactive")[]
+    resource: string
+    isAdmin: "" | "admin" | "non-admin"
+  }
+  resourceOptions: string[]
+  expiryDate: string
+  loadingPerms: boolean
+  saving: boolean
+  onClose: () => void
+  onFiltersChange: (filters: UserPermissionDialogProps["permFilters"]) => void
+  onTogglePermission: (permissionId: string, checked: boolean) => void
+  onExpiryChange: (date: string) => void
+  onSave: () => void
+}
+
+function UserPermissionDialog({
+  user,
+  permissions,
+  accountPermissions,
+  assignedPermissionIds,
+  draftPermissionSet,
+  permFilters,
+  resourceOptions,
+  expiryDate,
+  loadingPerms,
+  saving,
+  onClose,
+  onFiltersChange,
+  onTogglePermission,
+  onExpiryChange,
+  onSave,
+}: UserPermissionDialogProps) {
+  const [permPage, setPermPage] = useState(1)
+  const permPageSize = 12
+
+  // Reset to page 1 when permissions list changes (filter applied) — render-phase update
+  const [prevPermissions, setPrevPermissions] = useState(permissions)
+  if (prevPermissions !== permissions) {
+    setPrevPermissions(permissions)
+    setPermPage(1)
+  }
+
+  const totalPermPages = Math.max(1, Math.ceil(permissions.length / permPageSize))
+  const pagedPermissions = permissions.slice(
+    (permPage - 1) * permPageSize,
+    permPage * permPageSize
+  )
+  const addedCount = [...draftPermissionSet].filter((id) => !assignedPermissionIds.has(id)).length
+  const removedCount = [...assignedPermissionIds].filter((id) => !draftPermissionSet.has(id)).length
+
+  return (
+    <Dialog open={user !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[92vh] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+        {/* ── Header ── */}
+        <DialogHeader className="border-b px-6 py-4">
+          <div className="flex items-center gap-3">
+            <Avatar className="h-10 w-10">
+              <AvatarFallback className="bg-sky-100 text-sm font-medium text-sky-700">
+                {user ? getInitials(user.fullName, user.email) : ""}
+              </AvatarFallback>
+            </Avatar>
+            <div>
+              <DialogTitle>{user?.fullName || user?.username || "User"}</DialogTitle>
+              <DialogDescription>{user?.email}</DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {/* ── Body ── */}
+        <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr] divide-x overflow-hidden">
+          {/* Left panel: user info + draft summary + current assignments */}
+          <div className="flex flex-col gap-4 overflow-y-auto p-4">
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Account Info
+              </p>
+              <div className="space-y-2.5 rounded-lg border bg-muted/20 p-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground">Username</p>
+                  <p className="mt-0.5 truncate font-medium">{user?.username ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Role</p>
+                  <div className="mt-0.5">
+                    <Badge variant="outline">{user?.role}</Badge>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <div className="mt-0.5">
+                    <Badge
+                      className={
+                        user?.isActive
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : undefined
+                      }
+                      variant={user?.isActive ? "outline" : "destructive"}
+                    >
+                      {user?.isActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Role</div>
-                <div className="mt-1">
-                  <Badge variant="outline">{permDialogUser?.role}</Badge>
+            </div>
+
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Draft Changes
+              </p>
+              <div className="space-y-1.5 rounded-lg border bg-muted/20 p-3 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Selected</span>
+                  <span className="font-medium">{draftPermissionSet.size}</span>
                 </div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Status</div>
-                <div className="mt-1">
-                  <Badge
-                    className={
-                      permDialogUser?.isActive
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : undefined
-                    }
-                    variant={permDialogUser?.isActive ? "outline" : "destructive"}
-                  >
-                    {permDialogUser?.isActive ? "Active" : "Inactive"}
-                  </Badge>
-                </div>
+                {addedCount > 0 && (
+                  <div className="flex justify-between text-emerald-700">
+                    <span>To assign</span>
+                    <span className="font-medium">+{addedCount}</span>
+                  </div>
+                )}
+                {removedCount > 0 && (
+                  <div className="flex justify-between text-destructive">
+                    <span>To revoke</span>
+                    <span className="font-medium">−{removedCount}</span>
+                  </div>
+                )}
+                {addedCount === 0 && removedCount === 0 && (
+                  <p className="text-muted-foreground">No pending changes</p>
+                )}
               </div>
             </div>
 
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-0">
-                <PermissionSearchBox
-                  value={permFilters}
-                  onChange={handlePermFiltersChange}
-                  loading={loadingPerms}
-                />
+            {accountPermissions.length > 0 && (
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Current Assignments ({accountPermissions.length})
+                </p>
+                <div className="space-y-1.5">
+                  {accountPermissions.map((p) => (
+                    <div
+                      key={p.permissionId}
+                      className="rounded-md border bg-muted/10 px-2.5 py-2 text-xs"
+                    >
+                      <p className="truncate font-mono font-medium">
+                        {p.permissionCode ?? p.method ?? "Permission"}
+                      </p>
+                      <p className="mt-0.5 text-muted-foreground">{formatDate(p.expiresAt)}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
+          </div>
+
+          {/* Right panel: filters + list + pagination */}
+          <div className="flex min-h-0 flex-col">
+            {/* Search + expiry */}
+            <div className="space-y-2 border-b p-4">
+              <PermissionSearchBox
+                value={permFilters}
+                onChange={onFiltersChange}
+                loading={loadingPerms}
+                resourceOptions={resourceOptions}
+              />
               <div className="flex items-center gap-2">
                 <label className="whitespace-nowrap text-sm text-muted-foreground">
-                  Expiry:
+                  Expiry for new assignments:
                 </label>
                 <input
                   type="date"
                   className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   value={expiryDate}
-                  onChange={(e) => setExpiryDate(e.target.value)}
+                  onChange={(e) => onExpiryChange(e.target.value)}
                 />
               </div>
             </div>
 
-            <div className="max-h-[400px] overflow-y-auto rounded-md border">
+            {/* List */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {loadingPerms ? (
                 <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                   <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
@@ -587,7 +743,7 @@ export function UserManager({ session }: UserManagerProps) {
                 </div>
               ) : (
                 <div className="divide-y">
-                  {permissions.map((permission) => {
+                  {pagedPermissions.map((permission) => {
                     const checked = draftPermissionSet.has(permission.id)
                     const assigned = assignedPermissionIds.has(permission.id)
                     const isAdmin = isAdminPermission(permission)
@@ -596,60 +752,57 @@ export function UserManager({ session }: UserManagerProps) {
                       <label
                         key={permission.id}
                         className={cn(
-                          "flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/30",
+                          "flex cursor-pointer items-center gap-2.5 px-3 py-1.5 transition-colors hover:bg-muted/30",
                           checked && "bg-emerald-50/60",
                           isAdmin && checked && "bg-violet-50/60",
                           isAdmin && !checked && "bg-violet-50/20"
                         )}
                       >
                         <Checkbox
-                          className="mt-1"
                           checked={checked}
                           onCheckedChange={(value) =>
-                            togglePermission(permission.id, value === true)
+                            onTogglePermission(permission.id, value === true)
                           }
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {isAdmin && (
-                              <Crown className="h-4 w-4 shrink-0 text-violet-600" />
-                            )}
-                            <span className="font-medium">
-                              {permissionTitle(permission)}
+                          {/* Row 1: method + name + scope */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {isAdmin && <Crown className="h-3.5 w-3.5 shrink-0 text-violet-600" />}
+                            <Badge className={cn("shrink-0 text-[10px]", methodClass(permission.method))}>
+                              {permission.method ?? "ANY"}
+                            </Badge>
+                            <span className="text-sm font-medium leading-tight">{permissionTitle(permission)}</span>
+                            <span className="truncate font-mono text-xs text-muted-foreground">
+                              {permissionScopeLabel(permission)}
                             </span>
-                            {assigned ? (
-                              <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                          </div>
+                          {/* Row 2: badges + description */}
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                            {assigned && (
+                              <Badge className="border-emerald-200 bg-emerald-50 py-0 text-[10px] text-emerald-700">
                                 Assigned
                               </Badge>
-                            ) : null}
-                            {permission.isPublic ? (
-                              <Badge variant="outline">Public</Badge>
-                            ) : null}
-                            {permission.isSystem ? (
-                              <Badge variant="secondary">System</Badge>
-                            ) : null}
+                            )}
+                            {permission.isSystem && (
+                              <Badge variant="secondary" className="py-0 text-[10px]">System</Badge>
+                            )}
+                            {permission.isPublic && (
+                              <Badge variant="outline" className="py-0 text-[10px]">Public</Badge>
+                            )}
                             {isAdmin && (
                               <Badge
                                 variant="outline"
-                                className="border-violet-200 bg-violet-50 text-violet-700"
+                                className="border-violet-200 bg-violet-50 py-0 text-[10px] text-violet-700"
                               >
-                                Admin wildcard
+                                Admin
                               </Badge>
                             )}
+                            {permission.description && (
+                              <span className="text-[11px] text-muted-foreground">
+                                {permission.description}
+                              </span>
+                            )}
                           </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <Badge className={methodClass(permission.method)}>
-                              {permission.method ?? "ANY"}
-                            </Badge>
-                            <span className="font-mono">
-                              {permission.endpoint ?? "All endpoints"}
-                            </span>
-                          </div>
-                          {permission.description ? (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {permission.description}
-                            </p>
-                          ) : null}
                         </div>
                       </label>
                     )
@@ -658,42 +811,54 @@ export function UserManager({ session }: UserManagerProps) {
               )}
             </div>
 
-            {accountPermissions.length > 0 ? (
-              <div className="rounded-md border bg-muted/20 p-3">
-                <div className="mb-2 text-sm font-medium">
-                  Current assignments ({accountPermissions.length})
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {accountPermissions.map((p) => (
-                    <Badge key={p.permissionId} variant="outline" className="gap-1">
-                      {p.permissionCode ?? p.method ?? "Permission"}
-                      <span className="text-muted-foreground">
-                        {formatDate(p.expiresAt)}
-                      </span>
-                    </Badge>
-                  ))}
+            {/* Pagination */}
+            {!loadingPerms && permissions.length > permPageSize && (
+              <div className="flex items-center justify-between border-t px-4 py-2.5 text-sm text-muted-foreground">
+                <span>
+                  {(permPage - 1) * permPageSize + 1}–
+                  {Math.min(permPage * permPageSize, permissions.length)} of{" "}
+                  {permissions.length}
+                </span>
+                <div className="flex gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={permPage <= 1}
+                    onClick={() => setPermPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={permPage >= totalPermPages}
+                    onClick={() => setPermPage((p) => Math.min(totalPermPages, p + 1))}
+                  >
+                    Next
+                  </Button>
                 </div>
               </div>
-            ) : null}
+            )}
           </div>
+        </div>
 
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline" type="button">
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button onClick={handleSavePermissions} disabled={saving || loadingPerms}>
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              Save permissions
+        {/* ── Footer ── */}
+        <DialogFooter className="border-t px-6 py-4">
+          <DialogClose asChild>
+            <Button variant="outline" type="button">
+              Cancel
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+          </DialogClose>
+          <Button onClick={onSave} disabled={saving || loadingPerms}>
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            Save permissions
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

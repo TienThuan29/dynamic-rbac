@@ -58,6 +58,8 @@ export function DashboardPage({
     setActiveSectionId(nextSection.id)
   }
 
+  // console.log("Active section:", session)
+
   function renderSection() {
     if (activeSection.id === "users") {
       return <UserManager session={session} />

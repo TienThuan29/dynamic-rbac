@@ -109,7 +109,7 @@ Bước 3.2: Validate JWT (signature, expiry, issuer, audience)
          ↓
 Bước 3.3: Tra cứu permission record (Endpoint + Method) trong DB
          ↓
-Bước 3.4: Kiểm tra UserPermissions (exact match hoặc :admin wildcard)
+Bước 3.4: Kiểm tra UserPermissions (exact match hoặc :admin)
 ```
 
 #### Bước 3.1 — Extract Bearer token
@@ -325,7 +325,7 @@ CORS nên được config tại `LocalGateway` (điểm vào duy nhất), không
 | Invalid token format | 401 | "Token is empty" |
 | JWT signature/exp/iss/aud fail | 401 | "Invalid or expired token" |
 | No permission record found | 403 | "No permission record for METHOD PATH" |
-| No exact permission + no :admin wildcard | 403 | "Access denied: no permission for METHOD PATH" |
+| No exact permission + no :admin | 403 | "Access denied: no permission for METHOD PATH" |
 
 ---
 

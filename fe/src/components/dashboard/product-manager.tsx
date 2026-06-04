@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
+import toast from "react-hot-toast"
 import {
   AlertCircle,
   Boxes,
+  Eye,
   Image as ImageIcon,
   Loader2,
   PackageCheck,
@@ -36,6 +38,7 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   createProduct,
   deleteProduct,
+  getProduct,
   getProducts,
   updateProduct,
   updateProductStock,
@@ -131,13 +134,14 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
   const [saving, setSaving] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [form, setForm] = useState<ProductFormState>(emptyProductForm)
   const [stockProduct, setStockProduct] = useState<Product | null>(null)
   const [stockValue, setStockValue] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
+  const [detailProduct, setDetailProduct] = useState<Product | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const token = session?.accessToken ?? ""
@@ -197,6 +201,19 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
     setStockValue(String(product.stockQuantity))
   }
 
+  async function openDetailDialog(product: Product) {
+    setDetailProduct(product)
+    setLoadingDetail(true)
+    try {
+      const fresh = await getProduct(token, product.id)
+      setDetailProduct(fresh)
+    } catch {
+      // keep the row data already set
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
   function applyFilters() {
     setSearch(searchDraft.trim())
     setCategory(categoryDraft.trim())
@@ -215,23 +232,22 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
     event.preventDefault()
     setSaving(true)
     setError(null)
-    setNotice(null)
 
     try {
       const payload = toPayload(form)
 
       if (editingProduct) {
         await updateProduct(token, editingProduct.id, payload)
-        setNotice(`${payload.name} updated.`)
+        toast.success(`${payload.name} updated.`)
       } else {
         await createProduct(token, payload)
-        setNotice(`${payload.name} created.`)
+        toast.success(`${payload.name} created.`)
       }
 
       setIsFormOpen(false)
       setRefreshKey((value) => value + 1)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save product.")
+      toast.error(err instanceof Error ? err.message : "Unable to save product.")
     } finally {
       setSaving(false)
     }
@@ -244,15 +260,14 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
 
     setSaving(true)
     setError(null)
-    setNotice(null)
 
     try {
       await updateProductStock(token, stockProduct.id, Number(stockValue || 0))
       setStockProduct(null)
-      setNotice(`${stockProduct.name} stock updated.`)
+      toast.success(`${stockProduct.name} stock updated.`)
       setRefreshKey((value) => value + 1)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update stock.")
+      toast.error(err instanceof Error ? err.message : "Unable to update stock.")
     } finally {
       setSaving(false)
     }
@@ -263,15 +278,14 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
 
     setSaving(true)
     setError(null)
-    setNotice(null)
 
     try {
       await deleteProduct(token, deleteTarget.id)
-      setNotice(`${deleteTarget.name} archived.`)
+      toast.success(`${deleteTarget.name} archived.`)
       setDeleteTarget(null)
       setRefreshKey((value) => value + 1)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to archive product.")
+      toast.error(err instanceof Error ? err.message : "Unable to archive product.")
     } finally {
       setSaving(false)
     }
@@ -349,12 +363,6 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
             <div className="mx-4 mb-4 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               <AlertCircle className="h-4 w-4" />
               {error}
-            </div>
-          ) : null}
-
-          {notice ? (
-            <div className="mx-4 mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              {notice}
             </div>
           ) : null}
 
@@ -436,6 +444,14 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openDetailDialog(product)}
+                            title="View detail"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -645,6 +661,89 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
               Archive
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(detailProduct)} onOpenChange={(open) => !open && setDetailProduct(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Product detail</DialogTitle>
+            <DialogDescription>{detailProduct?.sku}</DialogDescription>
+          </DialogHeader>
+
+          {loadingDetail ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : detailProduct ? (
+            <div className="space-y-4">
+              {detailProduct.imageUrl && (
+                <div className="flex justify-center">
+                  <img
+                    src={detailProduct.imageUrl}
+                    alt={detailProduct.name}
+                    className="h-48 w-full rounded-md border object-cover"
+                    onError={(e) => { e.currentTarget.style.display = "none" }}
+                  />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">Name</div>
+                  <div className="font-medium">{detailProduct.name}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">SKU</div>
+                  <div className="font-mono">{detailProduct.sku}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Price</div>
+                  <div className="font-medium">{formatCurrency(detailProduct.price)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Stock</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{numberFormatter.format(detailProduct.stockQuantity)}</span>
+                    {getStockBadge(detailProduct)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Category</div>
+                  <div>{detailProduct.category ?? <span className="text-muted-foreground">Uncategorized</span>}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Status</div>
+                  <Badge variant={detailProduct.isActive ? "outline" : "destructive"}>
+                    {detailProduct.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+                <div className="col-span-2">
+                  <div className="text-xs text-muted-foreground">Description</div>
+                  <div className="mt-1 text-muted-foreground">{detailProduct.description || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Created</div>
+                  <div>{formatDate(detailProduct.createdAt)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Updated</div>
+                  <div>{formatDate(detailProduct.updatedAt)}</div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Close</Button>
+            </DialogClose>
+            {detailProduct && (
+              <Button onClick={() => { setDetailProduct(null); openEditDialog(detailProduct) }}>
+                <Pencil className="h-4 w-4" />
+                Edit
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
