@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { LogOut, ShieldCheck } from "lucide-react"
+import { PermissionGroupManager } from "@/components/dashboard/permission-group-manager"
 import { PermissionManager } from "@/components/dashboard/permission-manager"
 import { ProductManager } from "@/components/dashboard/product-manager"
 import { UserManager } from "@/components/dashboard/user-manager"
@@ -67,6 +68,9 @@ export function DashboardPage({
     if (activeSection.id === "permissions") {
       return <PermissionManager session={session} />
     }
+    if (activeSection.id === "permission-groups") {
+      return <PermissionGroupManager session={session} />
+    }
 
     return <ProductManager session={session} />
   }
@@ -132,6 +136,9 @@ export function DashboardPage({
                         "bg-sky-50 text-sky-700 hover:bg-sky-50 hover:text-sky-700",
                       active &&
                         section.id === "permissions" &&
+                        "bg-violet-50 text-violet-700 hover:bg-violet-50 hover:text-violet-700",
+                      active &&
+                        section.id === "permission-groups" &&
                         "bg-violet-50 text-violet-700 hover:bg-violet-50 hover:text-violet-700"
                     )}
                     onClick={() => handleSectionChange(section.id)}

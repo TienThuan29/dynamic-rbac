@@ -61,3 +61,17 @@ export function assignPermissionsWithExpiry(payload: {
 		body,
 	})
 }
+
+export function assignByGroup(payload: {
+	token: string
+	accountId: string
+	permissionGroupId: string
+	expiresAt?: string | null
+}) {
+	const { token, ...body } = payload
+	return request<UserPermissionDetail[]>("/users/assign-by-group", {
+		token,
+		method: "POST",
+		body,
+	})
+}

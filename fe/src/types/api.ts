@@ -54,6 +54,18 @@ export type Permission = {
   updatedAt?: string | null
 }
 
+export type PermissionGroup = {
+  id: string
+  groupName: string
+  permissionIds: string[]
+  description?: string | null
+  createdBy?: string | null
+  updatedBy?: string | null
+  createdAt: string
+  updatedAt?: string | null
+  permissions: Permission[]
+}
+
 export type UserPermissionDetail = {
   accountId: string
   permissionId: string
@@ -85,12 +97,28 @@ export type PermissionPagedResult = {
   pageSize: number
 }
 
+export type PermissionGroupPagedResult = {
+  items: PermissionGroup[]
+  totalCount: number
+  page: number
+  pageSize: number
+  totalPages?: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+}
+
 export type UpdatePermissionPayload = {
   permissionName?: string | null
   permissionCode?: string | null
   description?: string | null
   isPublic?: boolean | null
   isActive?: boolean | null
+}
+
+export type PermissionGroupPayload = {
+  groupName?: string
+  permissionIds?: string[]
+  description?: string | null
 }
 
 export type LoginPayload = {

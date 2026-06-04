@@ -140,18 +140,45 @@ var principal = handler.ValidateToken(token, new TokenValidationParameters
 }, out _);
 ```
 
-#### Bước 3.3 — Tra cứu permission record
+#### Bước 3.3 — Tra cứu permission record (route pattern matching)
+
+Permission `Endpoint` thường lưu route template kiểu ASP.NET — ví dụ `/api/products/{id}`.
+Vì vậy không thể `ILike` đơn thuần (không khớp được path thực tế `/api/products/743b...`).
+Thay vào đó:
 
 ```csharp
-var permission = await _dbContext.Permissions
+// 1) DB: lọc theo IsActive + Method để giới hạn tập kết quả
+var methodCandidates = await _dbContext.Permissions
     .AsNoTracking()
-    .FirstOrDefaultAsync(p =>
-        p.IsActive &&
-        EF.Functions.ILike(p.Endpoint ?? "", normalizedPath) &&
-        EF.Functions.ILike(p.Method ?? "", request.Method));
+    .Where(p => p.IsActive &&
+                p.Endpoint != null &&
+                EF.Functions.ILike(p.Method ?? "", request.Method))
+    .ToListAsync(ct);
+
+// 2) In-memory: match từng segment, coi {param} là wildcard
+var permission = methodCandidates.FirstOrDefault(p =>
+    RoutePatternMatches(p.Endpoint!, normalizedPath));
 ```
 
-> Dùng `ILike` (PostgreSQL) để so sánh case-insensitive.
+```csharp
+private static bool RoutePatternMatches(string pattern, string path)
+{
+    var patSegs  = pattern.Split('/', StringSplitOptions.RemoveEmptyEntries);
+    var pathSegs = path.Split('/',    StringSplitOptions.RemoveEmptyEntries);
+    if (patSegs.Length != pathSegs.Length) return false;
+    for (var i = 0; i < patSegs.Length; i++)
+    {
+        // {id}, {productId}, ... → wildcard segment
+        if (patSegs[i].StartsWith('{') && patSegs[i].EndsWith('}')) continue;
+        if (!patSegs[i].Equals(pathSegs[i], StringComparison.OrdinalIgnoreCase))
+            return false;
+    }
+    return true;
+}
+```
+
+> Tập `methodCandidates` thường chỉ vài chục bản ghi nên việc match in-memory không tạo gánh nặng.
+> Nếu danh mục permission tăng lớn, có thể tối ưu bằng prefix index hoặc cache phía AuthModule.
 
 #### Bước 3.4 — Kiểm tra user permissions
 
