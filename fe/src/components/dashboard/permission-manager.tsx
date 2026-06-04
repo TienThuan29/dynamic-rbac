@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   AlertCircle,
   CheckCircle2,
@@ -7,7 +7,6 @@ import {
   Loader2,
   RefreshCw,
   Save,
-  Search,
   Shield,
   ShieldCheck,
   Trash2,
@@ -32,8 +31,10 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { PermissionSearchBox, type PermissionFilters } from "@/components/permission-search-box"
 import {
   deletePermission,
+  getPermissionResources,
   getPermissions,
   updatePermission,
 } from "@/api/api"
@@ -105,8 +106,14 @@ export function PermissionManager({ session }: PermissionManagerProps) {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize] = useState(12)
-  const [searchDraft, setSearchDraft] = useState("")
-  const [search, setSearch] = useState("")
+  const [filters, setFilters] = useState<PermissionFilters>({
+    search: "",
+    method: [],
+    type: [],
+    status: [],
+    resource: "",
+  })
+  const [resourceOptions, setResourceOptions] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -128,18 +135,14 @@ export function PermissionManager({ session }: PermissionManagerProps) {
   const token = session?.accessToken ?? ""
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
-  const adminCount = useMemo(
-    () => permissions.filter(isAdminPermission).length,
-    [permissions]
-  )
-  const systemCount = useMemo(
-    () => permissions.filter((p) => p.isSystem).length,
-    [permissions]
-  )
-  const activeCount = useMemo(
-    () => permissions.filter((p) => p.isActive).length,
-    [permissions]
-  )
+  useEffect(() => {
+    if (!token) return
+    let ignore = false
+    getPermissionResources(token)
+      .then((resources) => { if (!ignore) setResourceOptions(resources) })
+      .catch(() => {})
+    return () => { ignore = true }
+  }, [token])
 
   useEffect(() => {
     if (!session) return
@@ -155,7 +158,17 @@ export function PermissionManager({ session }: PermissionManagerProps) {
           token,
           page,
           pageSize,
-          search,
+          search: filters.search || undefined,
+          method: filters.method.length === 1 ? filters.method[0] : undefined,
+          isSystem:
+            filters.type.length === 1
+              ? filters.type[0] === "system"
+              : undefined,
+          isActive:
+            filters.status.length === 1
+              ? filters.status[0] === "active"
+              : undefined,
+          resource: filters.resource || undefined,
         })
 
         if (!ignore) {
@@ -178,10 +191,10 @@ export function PermissionManager({ session }: PermissionManagerProps) {
     return () => {
       ignore = true
     }
-  }, [page, pageSize, refreshKey, search, session, token])
+  }, [page, pageSize, refreshKey, filters, session, token])
 
-  function applySearch() {
-    setSearch(searchDraft.trim())
+  function handleFiltersChange(newFilters: PermissionFilters) {
+    setFilters(newFilters)
     setPage(1)
   }
 
@@ -212,9 +225,12 @@ export function PermissionManager({ session }: PermissionManagerProps) {
 
     const payload: UpdatePermissionPayload = {
       permissionName: editDialog.permissionName || null,
-      permissionCode: editDialog.permissionCode || null,
       description: editDialog.description || null,
       isActive: editDialog.isActive,
+    }
+
+    if (!editDialog.permission.isSystem) {
+      payload.permissionCode = editDialog.permissionCode || null
     }
 
     setSaving(true)
@@ -301,55 +317,6 @@ export function PermissionManager({ session }: PermissionManagerProps) {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-3 md:grid-cols-4">
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total permissions
-            </CardTitle>
-            <Shield className="h-4 w-4 text-sky-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">{numberFormatter.format(total)}</div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Active
-            </CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">{numberFormatter.format(activeCount)}</div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              System entries
-            </CardTitle>
-            <ShieldCheck className="h-4 w-4 text-amber-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">{numberFormatter.format(systemCount)}</div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Admin wildcards
-            </CardTitle>
-            <Crown className="h-4 w-4 text-violet-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">{numberFormatter.format(adminCount)}</div>
-            <p className="mt-1 text-xs text-muted-foreground">Full resource access</p>
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Alerts */}
       {error ? (
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -372,22 +339,20 @@ export function PermissionManager({ session }: PermissionManagerProps) {
             <div>
               <CardTitle className="text-base">Permission Catalog</CardTitle>
               <CardDescription>
-                {search ? `Searching: "${search}"` : "Browse and manage permission records"}
+                {filters.search
+                  ? `Searching: "${filters.search}"`
+                  : "Browse and manage permission records"}
               </CardDescription>
             </div>
-            <div className="relative w-full sm:w-72">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                value={searchDraft}
-                onChange={(e) => setSearchDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applySearch()
-                }}
-                placeholder="Search permissions..."
-              />
-            </div>
           </div>
+          <PermissionSearchBox
+            value={filters}
+            onChange={handleFiltersChange}
+            totalResults={total}
+            loading={loading}
+            resourceOptions={resourceOptions}
+            className="mt-3"
+          />
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
@@ -592,7 +557,7 @@ export function PermissionManager({ session }: PermissionManagerProps) {
 
           {editDialog.permission?.isSystem && (
             <div className="rounded-md border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              This is a system permission — code, method, and endpoint cannot be changed.
+              This is a system permission — code and public flag cannot be changed.
             </div>
           )}
 
@@ -616,6 +581,7 @@ export function PermissionManager({ session }: PermissionManagerProps) {
                   }))
                 }
                 placeholder="e.g. View products"
+                disabled={editDialog.permission?.isSystem}
               />
             </div>
 
@@ -648,6 +614,7 @@ export function PermissionManager({ session }: PermissionManagerProps) {
                 }
                 placeholder="Optional description..."
                 className="min-h-20 resize-none"
+                disabled={editDialog.permission?.isSystem}
               />
             </div>
 
@@ -695,7 +662,9 @@ export function PermissionManager({ session }: PermissionManagerProps) {
             <DialogDescription>
               Are you sure you want to delete{" "}
               <strong>
-                {permissionTitle(deleteDialog.permission!)}
+                {deleteDialog.permission
+                  ? permissionTitle(deleteDialog.permission)
+                  : "this permission"}
               </strong>
               ? This action cannot be undone.
             </DialogDescription>

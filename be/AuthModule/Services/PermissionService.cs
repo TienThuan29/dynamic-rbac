@@ -24,7 +24,10 @@ public class PermissionService : IPermissionService
     }
 
     public async Task<PagedResult<PermissionDto>> GetAllAsync(
-        int page, int pageSize, string? search, CancellationToken ct = default)
+        int page, int pageSize, string? search,
+        string? method, bool? isSystem, bool? isActive,
+        string? resource,
+        CancellationToken ct = default)
     {
         var query = _db.Permissions.AsNoTracking();
 
@@ -36,6 +39,29 @@ public class PermissionService : IPermissionService
                 (p.PermissionCode != null && p.PermissionCode.ToLower().Contains(s)) ||
                 (p.Endpoint != null && p.Endpoint.ToLower().Contains(s)) ||
                 (p.Description != null && p.Description.ToLower().Contains(s)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(method))
+        {
+            query = query.Where(p => p.Method != null && p.Method.ToUpper() == method.ToUpper());
+        }
+
+        if (isSystem.HasValue)
+        {
+            query = query.Where(p => p.IsSystem == isSystem.Value);
+        }
+
+        if (isActive.HasValue)
+        {
+            query = query.Where(p => p.IsActive == isActive.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(resource))
+        {
+            var prefix = resource.ToLower();
+            query = query.Where(p =>
+                p.PermissionCode != null &&
+                p.PermissionCode.ToLower().StartsWith(prefix));
         }
 
         var totalCount = await query.CountAsync(ct);
@@ -63,7 +89,12 @@ public class PermissionService : IPermissionService
             ?? throw new KeyNotFoundException($"Permission {id} not found.");
 
         if (entity.IsSystem)
-            throw new InvalidOperationException("Cannot modify system permission.");
+        {
+            if (dto.PermissionCode != null)
+                throw new InvalidOperationException("Cannot modify the code of a system permission.");
+            if (dto.IsPublic.HasValue)
+                throw new InvalidOperationException("Cannot modify the public flag of a system permission.");
+        }
 
         if (dto.PermissionName != null)
             entity.PermissionName = dto.PermissionName;
@@ -103,5 +134,19 @@ public class PermissionService : IPermissionService
             .Where(p => idList.Contains(p.Id))
             .Select(p => PermissionMapper.ToDto(p))
             .ToListAsync(ct);
+    }
+
+    public async Task<List<string>> GetDistinctResourcesAsync(CancellationToken ct = default)
+    {
+        return await _db.Permissions
+            .AsNoTracking()
+            .Where(p => p.PermissionCode != null)
+            .Select(p => p.PermissionCode!)
+            .ToListAsync(ct)
+            .ContinueWith(t => t.Result
+                .Select(code => code.Split(':')[0])
+                .Distinct()
+                .OrderBy(r => r)
+                .ToList());
     }
 }

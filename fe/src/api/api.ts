@@ -4,9 +4,6 @@ import type {
   LoginResponse,
   Permission,
   PermissionPagedResult,
-  Product,
-  ProductPagedResult,
-  ProductPayload,
   RequestOptions,
   UpdatePermissionPayload,
   UserPagedResult,
@@ -36,10 +33,10 @@ function readError(data: unknown, fallback: string) {
   return fallback
 }
 
-async function request<T>(
-  baseUrl: string,
+export async function request<T>(
   path: string,
-  { method = "GET", token, body, query }: RequestOptions = {}
+  { method = "GET", token, body, query }: RequestOptions = {},
+  baseUrl = AUTH_API_BASE_URL
 ) {
   try {
     const response = await axios.request<T>({
@@ -68,50 +65,10 @@ async function request<T>(
   }
 }
 
-export function getProducts(query: {
-  token?: string | null
-  page: number
-  pageSize: number
-  category?: string
-  search?: string
-}) {
-  const { token, ...params } = query
-  return request<ProductPagedResult>(MAIN_API_BASE_URL, "/products", { token, query: params })
-}
-
-export function createProduct(token: string | null, payload: ProductPayload) {
-  return request<Product>(MAIN_API_BASE_URL, "/products", {
-    token,
-    method: "POST",
-    body: payload,
-  })
-}
-
-export function updateProduct(token: string | null, id: string, payload: ProductPayload) {
-  return request<Product>(MAIN_API_BASE_URL, `/products/${id}`, {
-    token,
-    method: "PUT",
-    body: payload,
-  })
-}
-
-export function updateProductStock(token: string | null, id: string, stockQuantity: number) {
-  return request<Product>(MAIN_API_BASE_URL, `/products/${id}/stock`, {
-    token,
-    method: "PATCH",
-    body: { stockQuantity },
-  })
-}
-
-export function deleteProduct(token: string | null, id: string) {
-  return request<void>(MAIN_API_BASE_URL, `/products/${id}`, {
-    token,
-    method: "DELETE",
-  })
-}
+export { MAIN_API_BASE_URL }
 
 export function login(payload: LoginPayload) {
-  return request<LoginResponse>(AUTH_API_BASE_URL, "/auth/login", {
+  return request<LoginResponse>("/auth/login", {
     method: "POST",
     body: payload,
   })
@@ -124,18 +81,11 @@ export function getAccounts(query: {
   search?: string
 }) {
   const { token, ...params } = query
-  return request<UserPagedResult>(AUTH_API_BASE_URL, "/users/accounts", {
-    token,
-    query: params,
-  })
+  return request<UserPagedResult>("/users/accounts", { token, query: params })
 }
 
 export function getAccountPermissions(token: string, accountId: string) {
-  return request<UserPermissionDetail[]>(
-    AUTH_API_BASE_URL,
-    `/users/account/${accountId}`,
-    { token }
-  )
+  return request<UserPermissionDetail[]>(`/users/account/${accountId}`, { token })
 }
 
 export function getPermissions(query: {
@@ -143,12 +93,17 @@ export function getPermissions(query: {
   page: number
   pageSize: number
   search?: string
+  method?: string
+  isSystem?: boolean
+  isActive?: boolean
+  resource?: string
 }) {
   const { token, ...params } = query
-  return request<PermissionPagedResult>(AUTH_API_BASE_URL, "/permissions", {
-    token,
-    query: params,
-  })
+  return request<PermissionPagedResult>("/permissions", { token, query: params })
+}
+
+export function getPermissionResources(token: string) {
+  return request<string[]>("/permissions/resources", { token })
 }
 
 export function assignPermissions(payload: {
@@ -158,7 +113,7 @@ export function assignPermissions(payload: {
   expiresAt?: string | null
 }) {
   const { token, ...body } = payload
-  return request<UserPermissionDetail[]>(AUTH_API_BASE_URL, "/users/assign", {
+  return request<UserPermissionDetail[]>("/users/assign", {
     token,
     method: "POST",
     body,
@@ -166,18 +121,14 @@ export function assignPermissions(payload: {
 }
 
 export function revokePermission(token: string, accountId: string, permissionId: string) {
-  return request<void>(
-    AUTH_API_BASE_URL,
-    `/users/revoke/${accountId}/${permissionId}`,
-    {
-      token,
-      method: "DELETE",
-    }
-  )
+  return request<void>(`/users/revoke/${accountId}/${permissionId}`, {
+    token,
+    method: "DELETE",
+  })
 }
 
 export function getPermission(token: string, id: string) {
-  return request<Permission>(AUTH_API_BASE_URL, `/permissions/${id}`, { token })
+  return request<Permission>(`/permissions/${id}`, { token })
 }
 
 export function updatePermission(
@@ -185,7 +136,7 @@ export function updatePermission(
   id: string,
   payload: UpdatePermissionPayload
 ) {
-  return request<Permission>(AUTH_API_BASE_URL, `/permissions/${id}`, {
+  return request<Permission>(`/permissions/${id}`, {
     token,
     method: "PUT",
     body: payload,
@@ -193,7 +144,7 @@ export function updatePermission(
 }
 
 export function deletePermission(token: string, id: string) {
-  return request<void>(AUTH_API_BASE_URL, `/permissions/${id}`, {
+  return request<void>(`/permissions/${id}`, {
     token,
     method: "DELETE",
   })
@@ -206,7 +157,7 @@ export function assignPermissionsWithExpiry(payload: {
   expiresAt?: string | null
 }) {
   const { token, ...body } = payload
-  return request<UserPermissionDetail[]>(AUTH_API_BASE_URL, "/users/assign", {
+  return request<UserPermissionDetail[]>("/users/assign", {
     token,
     method: "POST",
     body,

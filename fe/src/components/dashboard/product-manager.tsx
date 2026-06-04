@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   AlertCircle,
   Boxes,
-  DollarSign,
   Image as ImageIcon,
   Loader2,
-  Package,
   PackageCheck,
   Pencil,
   Plus,
@@ -41,7 +39,7 @@ import {
   getProducts,
   updateProduct,
   updateProductStock,
-} from "@/api/api"
+} from "@/api/product.api"
 import type { LoginResponse, Product, ProductPayload } from "@/types/api"
 
 type ProductFormState = {
@@ -143,24 +141,6 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const token = session?.accessToken ?? ""
-
-  const stats = useMemo(() => {
-    const visibleValue = products.reduce(
-      (sum, product) => sum + product.price * product.stockQuantity,
-      0
-    )
-    const visibleStock = products.reduce(
-      (sum, product) => sum + product.stockQuantity,
-      0
-    )
-    const outOfStock = products.filter((product) => product.stockQuantity === 0).length
-
-    return {
-      visibleValue,
-      visibleStock,
-      outOfStock,
-    }
-  }, [products])
 
   useEffect(() => {
     let ignore = false
@@ -324,51 +304,6 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
             Product
           </Button>
         </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Active products
-            </CardTitle>
-            <Package className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">{numberFormatter.format(total)}</div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Visible stock
-            </CardTitle>
-            <Boxes className="h-4 w-4 text-sky-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">
-              {numberFormatter.format(stats.visibleStock)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="rounded-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Visible value
-            </CardTitle>
-            <DollarSign className="h-4 w-4 text-amber-600" />
-          </CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-semibold">
-              {formatCurrency(stats.visibleValue)}
-            </div>
-            {stats.outOfStock > 0 ? (
-              <p className="mt-1 text-xs text-destructive">
-                {stats.outOfStock} visible item out of stock
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
       </div>
 
       <Card className="rounded-lg">
