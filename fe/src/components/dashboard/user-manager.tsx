@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Crown,
   KeyRound,
+  Layers,
   Loader2,
   RefreshCw,
   Save,
@@ -39,12 +40,13 @@ import {
   getAccounts,
   revokePermission,
 } from "@/api/auth.api"
-import { getPermissions, getPermissionResources } from "@/api/permission.api"
+import { getPermissionGroups, getPermissions, getPermissionResources } from "@/api/permission.api"
 import { permissionScopeLabel } from "@/lib/permission.util"
 import { cn } from "@/lib/utils"
 import type {
   LoginResponse,
   Permission,
+  PermissionGroup,
   UserAccount,
   UserPermissionDetail,
 } from "@/types/api"
@@ -141,6 +143,7 @@ export function UserManager({ session }: UserManagerProps) {
   const [permDialogUser, setPermDialogUser] = useState<UserAccount | null>(null)
   const [accountPermissions, setAccountPermissions] = useState<UserPermissionDetail[]>([])
   const [resourceOptions, setResourceOptions] = useState<string[]>([])
+  const [permGroups, setPermGroups] = useState<PermissionGroup[]>([])
   const [loadingPerms, setLoadingPerms] = useState(false)
 
   const token = session?.accessToken ?? ""
@@ -239,14 +242,16 @@ export function UserManager({ session }: UserManagerProps) {
     setLoadingPerms(true)
 
     try {
-      const [assigned, available, resources] = await Promise.all([
+      const [assigned, available, resources, groups] = await Promise.all([
         getAccountPermissions(token, user.accountId),
         getPermissions({ token, page: 1, pageSize: 100 }),
         getPermissionResources(token),
+        getPermissionGroups({ token, page: 1, pageSize: 100 }),
       ])
       setAccountPermissions(assigned)
       setPermissions(available.items)
       setResourceOptions(resources)
+      setPermGroups(groups.items)
       setDraftPermissionIds(assigned.map((p) => p.permissionId))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Unable to load permissions.")
@@ -260,8 +265,17 @@ export function UserManager({ session }: UserManagerProps) {
     setAccountPermissions([])
     setPermissions([])
     setResourceOptions([])
+    setPermGroups([])
     setDraftPermissionIds([])
     setPermFilters({ search: "", method: [], type: [], status: [], resource: "", isAdmin: "" })
+  }
+
+  function applyPermissionIds(ids: string[]) {
+    setDraftPermissionIds((current) => {
+      const set = new Set(current)
+      ids.forEach((id) => set.add(id))
+      return [...set]
+    })
   }
 
   function applySearch() {
@@ -527,12 +541,14 @@ export function UserManager({ session }: UserManagerProps) {
         draftPermissionSet={draftPermissionSet}
         permFilters={permFilters}
         resourceOptions={resourceOptions}
+        permGroups={permGroups}
         expiryDate={expiryDate}
         loadingPerms={loadingPerms}
         saving={saving}
         onClose={closePermDialog}
         onFiltersChange={handlePermFiltersChange}
         onTogglePermission={togglePermission}
+        onApplyPermissionIds={applyPermissionIds}
         onExpiryChange={setExpiryDate}
         onSave={handleSavePermissions}
       />
@@ -558,12 +574,14 @@ interface UserPermissionDialogProps {
     isAdmin: "" | "admin" | "non-admin"
   }
   resourceOptions: string[]
+  permGroups: PermissionGroup[]
   expiryDate: string
   loadingPerms: boolean
   saving: boolean
   onClose: () => void
   onFiltersChange: (filters: UserPermissionDialogProps["permFilters"]) => void
   onTogglePermission: (permissionId: string, checked: boolean) => void
+  onApplyPermissionIds: (ids: string[]) => void
   onExpiryChange: (date: string) => void
   onSave: () => void
 }
@@ -576,16 +594,19 @@ function UserPermissionDialog({
   draftPermissionSet,
   permFilters,
   resourceOptions,
+  permGroups,
   expiryDate,
   loadingPerms,
   saving,
   onClose,
   onFiltersChange,
   onTogglePermission,
+  onApplyPermissionIds,
   onExpiryChange,
   onSave,
 }: UserPermissionDialogProps) {
   const [permPage, setPermPage] = useState(1)
+  const [applyGroupOpen, setApplyGroupOpen] = useState(false)
   const permPageSize = 12
 
   // Reset to page 1 when permissions list changes (filter applied) — render-phase update
@@ -728,6 +749,17 @@ function UserPermissionDialog({
                   onChange={(e) => onExpiryChange(e.target.value)}
                 />
               </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setApplyGroupOpen(true)}
+                  disabled={loadingPerms || permGroups.length === 0}
+                >
+                  <Layers className="h-4 w-4" />
+                  Apply group
+                </Button>
+              </div>
             </div>
 
             {/* List */}
@@ -856,6 +888,133 @@ function UserPermissionDialog({
               <Save className="h-4 w-4" />
             )}
             Save permissions
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+
+      <ApplyGroupDialog
+        open={applyGroupOpen}
+        groups={permGroups}
+        onClose={() => setApplyGroupOpen(false)}
+        onApply={(group) => {
+          onApplyPermissionIds(group.permissionIds)
+          setApplyGroupOpen(false)
+          toast.success(
+            `Group "${group.groupName}" applied — ${group.permissionIds.length} permission${group.permissionIds.length !== 1 ? "s" : ""} added to draft.`
+          )
+        }}
+      />
+    </Dialog>
+  )
+}
+
+
+// ─── Apply Group Dialog ─────────────────────────────────────────────────────
+
+interface ApplyGroupDialogProps {
+  open: boolean
+  groups: PermissionGroup[]
+  onClose: () => void
+  onApply: (group: PermissionGroup) => void
+}
+
+function ApplyGroupDialog({ open, groups, onClose, onApply }: ApplyGroupDialogProps) {
+  const [selected, setSelected] = useState<PermissionGroup | null>(null)
+  const [groupSearch, setGroupSearch] = useState("")
+  const [prevOpen, setPrevOpen] = useState(open)
+
+  // Reset state when dialog re-opens (render-phase update)
+  if (prevOpen !== open) {
+    setPrevOpen(open)
+    if (open) {
+      setSelected(null)
+      setGroupSearch("")
+    }
+  }
+
+  const filtered = groups.filter(
+    (g) =>
+      !groupSearch ||
+      g.groupName.toLowerCase().includes(groupSearch.toLowerCase()) ||
+      g.description?.toLowerCase().includes(groupSearch.toLowerCase())
+  )
+
+  return (
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Layers className="h-5 w-5 text-sky-600" />
+            Apply Permission Group
+          </DialogTitle>
+          <DialogDescription>
+            Select a group to add all its permissions to the current draft.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="Search groups…"
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+            />
+          </div>
+
+          <div className="max-h-64 divide-y overflow-y-auto rounded-md border">
+            {filtered.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No groups found
+              </p>
+            ) : (
+              filtered.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  className={cn(
+                    "flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/40",
+                    selected?.id === group.id && "bg-sky-50 hover:bg-sky-50"
+                  )}
+                  onClick={() => setSelected(group)}
+                >
+                  <Layers
+                    className={cn(
+                      "mt-0.5 h-4 w-4 shrink-0",
+                      selected?.id === group.id ? "text-sky-600" : "text-muted-foreground"
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{group.groupName}</p>
+                    {group.description && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {group.description}
+                      </p>
+                    )}
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {group.permissionIds.length} permission
+                      {group.permissionIds.length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  {selected?.id === group.id && (
+                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline" type="button">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button disabled={!selected} onClick={() => selected && onApply(selected)}>
+            <Layers className="h-4 w-4" />
+            Apply group
           </Button>
         </DialogFooter>
       </DialogContent>
