@@ -37,6 +37,7 @@ public class TokenRepository : ITokenRepository
     {
         return await _db.Tokens
             .AsNoTracking()
+            .Include(t => t.Account)
             .Include(t => t.TokenPermissions)
                 .ThenInclude(tp => tp.Permission)
             .FirstOrDefaultAsync(t => t.Id == id, ct);
@@ -79,7 +80,7 @@ public class TokenRepository : ITokenRepository
         var query = _db.Tokens.AsNoTracking();
 
         if (!isAdmin && currentAccountId.HasValue)
-            query = query.Where(t => t.AccountId == currentAccountId.Value);
+            query = query.Where(t => t.CreatedBy == currentAccountId.Value);
 
         if (isRevoked.HasValue)
             query = query.Where(t => t.IsRevoked == isRevoked.Value);
@@ -87,9 +88,11 @@ public class TokenRepository : ITokenRepository
         var totalCount = await query.CountAsync(ct);
 
         var items = await query
+            .Include(t => t.Account)
+            .Include(t => t.CreatedByAccount)
             .Include(t => t.TokenPermissions)
                 .ThenInclude(tp => tp.Permission)
-            .OrderByDescending(t => t.IssuedAt)
+            .OrderByDescending(t => t.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);

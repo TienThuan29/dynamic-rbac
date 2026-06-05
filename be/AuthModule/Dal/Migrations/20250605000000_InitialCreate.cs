@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -31,24 +30,6 @@ namespace AuthModule.Dal.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "permission_groups",
-                columns: table => new
-                {
-                    id = table.Column<Guid>(type: "uuid", nullable: false),
-                    created_by = table.Column<Guid>(type: "uuid", nullable: true),
-                    updated_by = table.Column<Guid>(type: "uuid", nullable: true),
-                    group_name = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
-                    permission_ids = table.Column<List<string>>(type: "text[]", nullable: false),
-                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    description = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_permission_groups", x => x.id);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "permissions",
                 columns: table => new
                 {
@@ -69,6 +50,24 @@ namespace AuthModule.Dal.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_permissions", x => x.id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "permission_groups",
+                columns: table => new
+                {
+                    id = table.Column<Guid>(type: "uuid", nullable: false),
+                    created_by = table.Column<Guid>(type: "uuid", nullable: true),
+                    updated_by = table.Column<Guid>(type: "uuid", nullable: true),
+                    group_name = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
+                    permission_ids = table.Column<string>(type: "text[]", nullable: false),
+                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    description = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_permission_groups", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
@@ -128,6 +127,61 @@ namespace AuthModule.Dal.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "tokens",
+                columns: table => new
+                {
+                    id = table.Column<Guid>(type: "uuid", nullable: false),
+                    created_by = table.Column<Guid>(type: "uuid", nullable: false),
+                    account_id = table.Column<Guid>(type: "uuid", nullable: true),
+                    token_hash = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
+                    token_type = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
+                    expires_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    is_revoked = table.Column<bool>(type: "boolean", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_tokens", x => x.id);
+                    table.ForeignKey(
+                        name: "FK_tokens_accounts_created_by",
+                        column: x => x.created_by,
+                        principalTable: "accounts",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Restrict);
+                    table.ForeignKey(
+                        name: "FK_tokens_accounts_account_id",
+                        column: x => x.account_id,
+                        principalTable: "accounts",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.SetNull);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "token_permissions",
+                columns: table => new
+                {
+                    token_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    permission_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    granted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    expires_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_token_permissions", x => new { x.token_id, x.permission_id });
+                    table.ForeignKey(
+                        name: "FK_token_permissions_permissions_permission_id",
+                        column: x => x.permission_id,
+                        principalTable: "permissions",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_token_permissions_tokens_token_id",
+                        column: x => x.token_id,
+                        principalTable: "tokens",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
             migrationBuilder.CreateIndex(
                 name: "IX_permissions_permission_code",
                 table: "permissions",
@@ -141,6 +195,27 @@ namespace AuthModule.Dal.Migrations
                 column: "permission_name",
                 unique: true,
                 filter: "permission_name IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_token_permissions_permission_id",
+                table: "token_permissions",
+                column: "permission_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_tokens_account_id_is_revoked",
+                table: "tokens",
+                columns: new[] { "account_id", "is_revoked" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_tokens_created_by",
+                table: "tokens",
+                column: "created_by");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_tokens_token_hash",
+                table: "tokens",
+                column: "token_hash",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_user_permissions_permission_id",
@@ -157,20 +232,13 @@ namespace AuthModule.Dal.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
-                name: "permission_groups");
-
-            migrationBuilder.DropTable(
-                name: "user_permissions");
-
-            migrationBuilder.DropTable(
-                name: "users");
-
-            migrationBuilder.DropTable(
-                name: "permissions");
-
-            migrationBuilder.DropTable(
-                name: "accounts");
+            migrationBuilder.DropTable(name: "token_permissions");
+            migrationBuilder.DropTable(name: "user_permissions");
+            migrationBuilder.DropTable(name: "permission_groups");
+            migrationBuilder.DropTable(name: "tokens");
+            migrationBuilder.DropTable(name: "users");
+            migrationBuilder.DropTable(name: "permissions");
+            migrationBuilder.DropTable(name: "accounts");
         }
     }
 }

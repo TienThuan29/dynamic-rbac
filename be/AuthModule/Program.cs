@@ -28,6 +28,7 @@ builder.Services.AddScoped<ITokenPermissionRepository, TokenPermissionRepository
 // Services
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IJwtUtil, JwtUtil>();
+builder.Services.AddScoped<ITokenService>(sp => sp.GetRequiredService<IJwtUtil>());
 builder.Services.AddScoped<ITokenAppService, TokenAppService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IPermissionGroupService, PermissionGroupService>();

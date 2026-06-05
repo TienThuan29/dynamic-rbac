@@ -3,6 +3,7 @@ import { LogOut, ShieldCheck } from "lucide-react"
 import { PermissionGroupManager } from "@/components/dashboard/permission-group-manager"
 import { PermissionManager } from "@/components/dashboard/permission-manager"
 import { ProductManager } from "@/components/dashboard/product-manager"
+import { TokenManager } from "@/components/dashboard/token-manager"
 import { UserManager } from "@/components/dashboard/user-manager"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -70,6 +71,9 @@ export function DashboardPage({
     }
     if (activeSection.id === "permission-groups") {
       return <PermissionGroupManager session={session} />
+    }
+    if (activeSection.id === "tokens") {
+      return <TokenManager session={session} />
     }
 
     return <ProductManager session={session} />
@@ -139,7 +143,10 @@ export function DashboardPage({
                         "bg-violet-50 text-violet-700 hover:bg-violet-50 hover:text-violet-700",
                       active &&
                         section.id === "permission-groups" &&
-                        "bg-violet-50 text-violet-700 hover:bg-violet-50 hover:text-violet-700"
+                        "bg-violet-50 text-violet-700 hover:bg-violet-50 hover:text-violet-700",
+                      active &&
+                        section.id === "tokens" &&
+                        "bg-amber-50 text-amber-700 hover:bg-amber-50 hover:text-amber-700"
                     )}
                     onClick={() => handleSectionChange(section.id)}
                   >

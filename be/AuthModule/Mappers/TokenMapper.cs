@@ -8,13 +8,15 @@ public static class TokenMapper
     public static TokenResponse ToResponse(Token t) => new()
     {
         Id = t.Id,
+        CreatedById = t.CreatedBy,
+        CreatedByEmail = t.CreatedByAccount?.Email,
+        CreatedByUsername = t.CreatedByAccount?.Username,
         AccountId = t.AccountId,
+        AccountEmail = t.Account?.Email,
+        AccountUsername = t.Account?.Username,
         TokenType = t.TokenType,
         ExpiresAt = t.ExpiresAt,
         IsRevoked = t.IsRevoked,
-        IssuedAt = t.IssuedAt,
-        IpAddress = t.IpAddress,
-        UserAgent = t.UserAgent,
         Permissions = t.TokenPermissions?.Select(tp => new TokenPermissionResponse
         {
             PermissionId = tp.PermissionId,

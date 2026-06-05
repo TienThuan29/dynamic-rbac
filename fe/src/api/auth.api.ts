@@ -24,7 +24,7 @@ export function getAccounts(query: {
 }
 
 export function getAccountPermissions(token: string, accountId: string) {
-	return request<UserPermissionDetail[]>(`/users/account/${accountId}`, { token })
+	return request<UserPermissionDetail[]>(`/users/${accountId}/permissions`, { token })
 }
 
 export function assignPermissions(payload: {
@@ -34,7 +34,7 @@ export function assignPermissions(payload: {
 	expiresAt?: string | null
 }) {
 	const { token, ...body } = payload
-	return request<UserPermissionDetail[]>("/users/assign", {
+	return request<UserPermissionDetail[]>("/users/permissions", {
 		token,
 		method: "POST",
 		body,
@@ -42,7 +42,7 @@ export function assignPermissions(payload: {
 }
 
 export function revokePermission(token: string, accountId: string, permissionId: string) {
-	return request<void>(`/users/revoke/${accountId}/${permissionId}`, {
+	return request<void>(`/users/${accountId}/permissions/${permissionId}`, {
 		token,
 		method: "DELETE",
 	})
@@ -55,7 +55,7 @@ export function assignPermissionsWithExpiry(payload: {
 	expiresAt?: string | null
 }) {
 	const { token, ...body } = payload
-	return request<UserPermissionDetail[]>("/users/assign", {
+	return request<UserPermissionDetail[]>("/users/permissions", {
 		token,
 		method: "POST",
 		body,
@@ -69,7 +69,7 @@ export function assignByGroup(payload: {
 	expiresAt?: string | null
 }) {
 	const { token, ...body } = payload
-	return request<UserPermissionDetail[]>("/users/assign-by-group", {
+	return request<UserPermissionDetail[]>("/users/permissions/by-group", {
 		token,
 		method: "POST",
 		body,

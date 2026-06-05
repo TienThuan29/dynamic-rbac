@@ -71,16 +71,11 @@ public class TokenController : ControllerBase
     {
         try
         {
-            var input = new CreateTokenRequest
-            {
-                AccountId = dto.AccountId,
-                PermissionIds = dto.PermissionIds,
-                IpAddress = dto.IpAddress ?? HttpContext.Connection.RemoteIpAddress?.ToString(),
-                UserAgent = dto.UserAgent ?? Request.Headers.UserAgent.ToString(),
-                ExpiresInMinutes = dto.ExpiresInMinutes
-            };
+            var (accountId, isAdmin) = GetAuthContext();
+            if (!accountId.HasValue)
+                return Unauthorized(new { message = "Invalid session." });
 
-            var result = await _tokenService.CreateAsync(input, ct);
+            var result = await _tokenService.CreateAsync(accountId.Value, dto, ct);
             return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
         }
         catch (KeyNotFoundException ex)

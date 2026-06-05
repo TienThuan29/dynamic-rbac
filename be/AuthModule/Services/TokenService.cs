@@ -16,7 +16,7 @@ public interface ITokenAppService
 
     Task<TokenResponse?> GetByIdAsync(Guid id, Guid? currentAccountId, bool isAdmin, CancellationToken ct = default);
 
-    Task<CreateTokenResponse> CreateAsync(CreateTokenRequest input, CancellationToken ct = default);
+    Task<CreateTokenResponse> CreateAsync(Guid currentAccountId, CreateTokenRequest input, CancellationToken ct = default);
 
     Task<RefreshTokenResponse> RefreshAsync(Guid id, Guid? currentAccountId, bool isAdmin,
         int? extendMinutes, CancellationToken ct = default);
@@ -75,38 +75,44 @@ public class TokenAppService : ITokenAppService
         var token = await _tokenRepo.GetByIdAsync(id, ct);
         if (token == null) return null;
 
-        if (!isAdmin && token.AccountId != currentAccountId)
+        if (!isAdmin && token.CreatedBy != currentAccountId)
             throw new UnauthorizedAccessException();
 
         return TokenMapper.ToResponse(token);
     }
 
-    public async Task<CreateTokenResponse> CreateAsync(CreateTokenRequest input, CancellationToken ct = default)
+    public async Task<CreateTokenResponse> CreateAsync(Guid currentAccountId, CreateTokenRequest input, CancellationToken ct = default)
     {
-        var account = await _accountRepo.GetByIdAsync(input.AccountId, ct)
-            ?? throw new KeyNotFoundException($"Account {input.AccountId} not found.");
-
-        if (!account.IsActive)
-            throw new InvalidOperationException("Account is inactive.");
+        Account? account = null;
+        if (input.AccountId.HasValue)
+        {
+            account = await _accountRepo.GetByIdAsync(input.AccountId.Value, ct)
+                ?? throw new KeyNotFoundException($"Account {input.AccountId} not found.");
+            if (!account.IsActive)
+                throw new InvalidOperationException("Account is inactive.");
+        }
 
         var now = DateTime.UtcNow;
         var expiresAt = input.ExpiresInMinutes.HasValue
             ? now.AddMinutes(input.ExpiresInMinutes.Value)
             : (DateTime?)null;
 
-        var userId = account.User?.Id ?? account.Id;
-        var rawJwt = _jwtUtil.GenerateJwtToken(userId, account.Id, account.Email, account.Role);
+        var rawJwt = account != null
+            ? _jwtUtil.GenerateJwtToken(
+                account.User?.Id ?? account.Id,
+                account.Id,
+                account.Email,
+                account.Role)
+            : _jwtUtil.GenerateJwtToken(currentAccountId, currentAccountId, null, "Token");
         var tokenHash = ComputeJwtHash(rawJwt);
 
         var token = new Token
         {
+            CreatedBy = currentAccountId,
             AccountId = input.AccountId,
             TokenHash = tokenHash,
             TokenType = "Bearer",
             ExpiresAt = expiresAt,
-            IssuedAt = now,
-            IpAddress = input.IpAddress,
-            UserAgent = input.UserAgent,
             IsRevoked = false
         };
 
@@ -126,17 +132,16 @@ public class TokenAppService : ITokenAppService
 
         await _tokenRepo.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Token {TokenId} created for account {AccountId}", token.Id, input.AccountId);
+        _logger.LogInformation("Token {TokenId} created by {CreatedBy} for account {AccountId}",
+            token.Id, currentAccountId, input.AccountId);
 
         return new CreateTokenResponse
         {
             Id = token.Id,
+            CreatedById = token.CreatedBy,
             AccountId = token.AccountId,
             TokenType = token.TokenType,
             ExpiresAt = token.ExpiresAt,
-            IssuedAt = token.IssuedAt,
-            IpAddress = token.IpAddress,
-            UserAgent = token.UserAgent,
             RawJwt = rawJwt,
             Permissions = input.PermissionIds
         };
@@ -149,19 +154,30 @@ public class TokenAppService : ITokenAppService
         var token = await _tokenRepo.GetByIdForUpdateAsync(id, ct)
             ?? throw new KeyNotFoundException($"Token {id} not found.");
 
-        if (!isAdmin && token.AccountId != currentAccountId)
+        if (!isAdmin && token.CreatedBy != currentAccountId)
             throw new UnauthorizedAccessException();
 
         if (token.IsRevoked)
             throw new InvalidOperationException("Cannot refresh a revoked token.");
 
-        var account = await _accountRepo.GetByIdAsync(token.AccountId, ct)
-            ?? throw new KeyNotFoundException("Token account not found.");
+        var now = DateTime.UtcNow;
+        Guid accountIdForJwt = token.AccountId ?? token.CreatedBy;
+        Account? account = null;
 
-        var userId = account.User?.Id ?? account.Id;
-        var rawJwt = _jwtUtil.GenerateJwtToken(userId, account.Id, account.Email, account.Role);
+        if (token.AccountId.HasValue)
+        {
+            account = await _accountRepo.GetByIdAsync(token.AccountId.Value, ct)
+                ?? throw new KeyNotFoundException("Token account not found.");
+        }
+
+        var rawJwt = account != null
+            ? _jwtUtil.GenerateJwtToken(
+                account.User?.Id ?? account.Id,
+                account.Id,
+                account.Email,
+                account.Role)
+            : _jwtUtil.GenerateJwtToken(token.CreatedBy, token.CreatedBy, null, "Token");
         token.TokenHash = ComputeJwtHash(rawJwt);
-        token.IssuedAt = DateTime.UtcNow;
 
         if (extendMinutes.HasValue)
             token.ExpiresAt = DateTime.UtcNow.AddMinutes(extendMinutes.Value);
@@ -182,7 +198,7 @@ public class TokenAppService : ITokenAppService
         var token = await _tokenRepo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Token {id} not found.");
 
-        if (!isAdmin && token.AccountId != currentAccountId)
+        if (!isAdmin && token.CreatedBy != currentAccountId)
             throw new UnauthorizedAccessException();
 
         if (token.IsRevoked)
@@ -199,7 +215,7 @@ public class TokenAppService : ITokenAppService
         var token = await _tokenRepo.GetByIdForDeleteAsync(id, ct)
             ?? throw new KeyNotFoundException($"Token {id} not found.");
 
-        if (!isAdmin && token.AccountId != currentAccountId)
+        if (!isAdmin && token.CreatedBy != currentAccountId)
             throw new UnauthorizedAccessException();
 
         if (!token.IsRevoked)
@@ -219,7 +235,7 @@ public class TokenAppService : ITokenAppService
         var token = await _tokenRepo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Token {id} not found.");
 
-        if (!isAdmin && token.AccountId != currentAccountId)
+        if (!isAdmin && token.CreatedBy != currentAccountId)
             throw new UnauthorizedAccessException();
 
         if (token.IsRevoked)
@@ -250,7 +266,7 @@ public class TokenAppService : ITokenAppService
         var token = await _tokenRepo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Token {id} not found.");
 
-        if (!isAdmin && token.AccountId != currentAccountId)
+        if (!isAdmin && token.CreatedBy != currentAccountId)
             throw new UnauthorizedAccessException();
 
         var tp = await _tokenPermRepo.GetByTokenIdAsync(id, ct);

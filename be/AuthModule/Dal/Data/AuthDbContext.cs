@@ -82,8 +82,26 @@ public class AuthDbContext : DbContext
         modelBuilder.Entity<Token>()
             .HasIndex(t => t.TokenHash).IsUnique();
 
+        // Token: index on created_by for non-admin filtering
+        modelBuilder.Entity<Token>()
+            .HasIndex(t => t.CreatedBy);
+
         // Token: index on account_id + is_revoked for fast lookup
         modelBuilder.Entity<Token>()
             .HasIndex(t => new { t.AccountId, t.IsRevoked });
+
+        // Token: FK to Account (CreatedBy — required)
+        modelBuilder.Entity<Token>()
+            .HasOne(t => t.CreatedByAccount)
+            .WithMany()
+            .HasForeignKey(t => t.CreatedBy)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Token: FK to Account (AccountId — optional)
+        modelBuilder.Entity<Token>()
+            .HasOne(t => t.Account)
+            .WithMany()
+            .HasForeignKey(t => t.AccountId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

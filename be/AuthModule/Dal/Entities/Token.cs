@@ -11,8 +11,11 @@ public class Token
     public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
+    [Column("created_by")]
+    public Guid CreatedBy { get; set; }
+
     [Column("account_id")]
-    public Guid AccountId { get; set; }
+    public Guid? AccountId { get; set; }
 
     [Required]
     [MaxLength(255)]
@@ -29,20 +32,12 @@ public class Token
     [Column("is_revoked")]
     public bool IsRevoked { get; set; } = false;
 
-    [Column("issued_at")]
-    public DateTime IssuedAt { get; set; } = DateTime.UtcNow;
-
-    [MaxLength(50)]
-    [Column("ip_address")]
-    public string? IpAddress { get; set; }
-
-    [MaxLength(500)]
-    [Column("user_agent")]
-    public string? UserAgent { get; set; }
-
     // Navigation
+    [ForeignKey(nameof(CreatedBy))]
+    public Account CreatedByAccount { get; set; } = null!;
+
     [ForeignKey(nameof(AccountId))]
-    public Account Account { get; set; } = null!;
+    public Account? Account { get; set; }
 
     public ICollection<TokenPermission> TokenPermissions { get; set; } = new List<TokenPermission>();
 }

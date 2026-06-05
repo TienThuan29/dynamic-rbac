@@ -195,26 +195,21 @@ namespace AuthModule.Dal.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<Guid>("AccountId")
+                    b.Property<Guid?>("AccountId")
                         .HasColumnType("uuid")
                         .HasColumnName("account_id");
 
-                    b.Property<DateTime>("IssuedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("issued_at");
-
-                    b.Property<string>("IpAddress")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("ip_address");
-
-                    b.Property<bool>("IsRevoked")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_revoked");
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
 
                     b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
+
+                    b.Property<bool>("IsRevoked")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_revoked");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
@@ -228,14 +223,13 @@ namespace AuthModule.Dal.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("token_type");
 
-                    b.Property<string>("UserAgent")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
-                        .HasColumnName("user_agent");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("AccountId");
+                    b.HasIndex("AccountId", "IsRevoked")
+                        .HasDatabaseName("IX_tokens_account_id_is_revoked");
+
+                    b.HasIndex("CreatedBy")
+                        .HasDatabaseName("IX_tokens_created_by");
 
                     b.HasIndex("TokenHash")
                         .IsUnique();
@@ -378,10 +372,17 @@ namespace AuthModule.Dal.Migrations
                     b.HasOne("AuthModule.Dal.Entities.Account", "Account")
                         .WithMany()
                         .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("AuthModule.Dal.Entities.Account", "CreatedByAccount")
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Account");
+
+                    b.Navigation("CreatedByAccount");
                 });
 
             modelBuilder.Entity("AuthModule.Dal.Entities.TokenPermission", b =>
