@@ -1,12 +1,9 @@
+using System.Security.Claims;
 using AuthModule.Attributes;
-using AuthModule.Data;
+using AuthModule.Dal.Repositories;
 using AuthModule.DTOs;
-using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using System.Security.Claims;
 
 namespace AuthModule.Controllers;
 
@@ -23,16 +20,19 @@ namespace AuthModule.Controllers;
     Description = "Internal endpoint used by the API Gateway to validate JWTs and check user permissions before forwarding requests to downstream services.")]
 public class GatekeeperController : ControllerBase
 {
-    private readonly AuthDbContext _dbContext;
+    private readonly IUserPermissionRepository _userPermRepo;
+    private readonly IPermissionRepository _permissionRepo;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GatekeeperController> _logger;
 
     public GatekeeperController(
-        AuthDbContext dbContext,
+        IUserPermissionRepository userPermRepo,
+        IPermissionRepository permissionRepo,
         IConfiguration configuration,
         ILogger<GatekeeperController> logger)
     {
-        _dbContext = dbContext;
+        _userPermRepo = userPermRepo;
+        _permissionRepo = permissionRepo;
         _configuration = configuration;
         _logger = logger;
     }
@@ -51,9 +51,14 @@ public class GatekeeperController : ControllerBase
             return Ok(GatekeeperResponseDto.Deny("Missing or invalid Authorization header", 401));
         }
 
-        var token = GetAccessTokenFromHeader(authHeader);
+        var token = authHeader["Bearer ".Length..].Trim();
+        if (string.IsNullOrEmpty(token))
+        {
+            _logger.LogWarning("Gatekeeper: empty token");
+            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
+        }
 
-        // Decode and validate the JWT 
+        // Decode and validate the JWT
         Guid userId;
         Guid accountId;
         string email;
@@ -100,10 +105,9 @@ public class GatekeeperController : ControllerBase
         // Normalize request path
         var normalizedPath = request.Path.StartsWith('/') ? request.Path : "/" + request.Path;
 
-        // Admin role bypass — Admins can access any endpoint 
+        // Admin role bypass — Admins can access any endpoint
         if (role.Equals("Admin", StringComparison.OrdinalIgnoreCase))
         {
-            // _logger.LogDebug("Gatekeeper: Admin role bypass for {Method} {Path}", request.Method, normalizedPath);
             return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
         }
 
@@ -111,12 +115,10 @@ public class GatekeeperController : ControllerBase
         // Fetch active permissions for this HTTP method (small set), then match
         // the actual path against stored route patterns which may contain {param}
         // placeholders — e.g. /api/products/{id} must match /api/products/743bcf48-...
-        var methodCandidates = await _dbContext.Permissions
-            .AsNoTracking()
-            .Where(p => p.IsActive &&
-                        p.Endpoint != null &&
-                        EF.Functions.ILike(p.Method ?? "", request.Method))
-            .ToListAsync(ct);
+        var allPermissions = await _permissionRepo.GetAllActiveForGatekeeperAsync(request.Method, ct);
+        var methodCandidates = allPermissions
+            .Where(p => RoutePatternMatches(p.Endpoint!, normalizedPath))
+            .ToList();
 
         var permission = methodCandidates.FirstOrDefault(p =>
             RoutePatternMatches(p.Endpoint!, normalizedPath));
@@ -139,20 +141,14 @@ public class GatekeeperController : ControllerBase
             return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
         }
 
-        // ── 6. Check user permission in UserPermissions table ─────────────────
+        // ── Check user permission in UserPermissions table ─────────────────
         //    Supports two grant modes:
         //    a) Exact match — user has this specific PermissionId
         //    b) Wildcard match — user has [resource]:admin which covers every action on that resource
         var now = DateTime.UtcNow;
 
         // First, check for exact permission match
-        var hasExactPermission = await _dbContext.UserPermissions
-            .AsNoTracking()
-            .AnyAsync(
-                up => up.AccountId == accountId &&
-                      up.PermissionId == permission.Id &&
-                      (up.ExpiresAt == null || up.ExpiresAt > now),
-                ct);
+        var hasExactPermission = await _userPermRepo.AnyAsync(accountId, permission.Id, now, ct);
 
         if (hasExactPermission)
         {
@@ -167,14 +163,7 @@ public class GatekeeperController : ControllerBase
         if (resource is not null)
         {
             var adminCode = $"{resource}:admin";
-            // Join to Permission so we can read PermissionCode without needing Include
-            var hasAdminPermission = await _dbContext.UserPermissions
-                .AsNoTracking()
-                .AnyAsync(
-                    up => up.AccountId == accountId &&
-                          up.Permission.PermissionCode == adminCode &&
-                          (up.ExpiresAt == null || up.ExpiresAt > now),
-                    ct);
+            var hasAdminPermission = await _userPermRepo.AnyByResourceCodeAsync(accountId, adminCode, now, ct);
 
             if (hasAdminPermission)
             {
@@ -190,17 +179,6 @@ public class GatekeeperController : ControllerBase
             accountId, request.Method, normalizedPath);
         return Ok(GatekeeperResponseDto.Deny(
             $"Access denied: no permission for {request.Method} {request.Path}", 403));
-    }
-
-    private string GetAccessTokenFromHeader(string? authHeader)
-    {
-        string token = authHeader["Bearer ".Length..].Trim();
-        if (string.IsNullOrEmpty(token))
-        {
-            _logger.LogWarning("Gatekeeper: empty token");
-            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
-        }
-        return token;
     }
 
     private ClaimsPrincipal ValidateJwt(string token, out Exception? validationException)

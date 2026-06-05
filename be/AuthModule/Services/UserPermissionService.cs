@@ -1,8 +1,7 @@
-using AuthModule.Data;
 using AuthModule.Dal.Entities;
+using AuthModule.Dal.Repositories;
 using AuthModule.DTOs;
 using AuthModule.Mappers;
-using Microsoft.EntityFrameworkCore;
 
 namespace AuthModule.Services;
 
@@ -18,50 +17,35 @@ public interface IUserPermissionService
 
 public class UserPermissionService : IUserPermissionService
 {
-    private readonly AuthDbContext _db;
+    private readonly IUserPermissionRepository _userPermRepo;
+    private readonly IAccountRepository _accountRepo;
     private readonly IPermissionGroupService _groupService;
 
-    public UserPermissionService(AuthDbContext db, IPermissionGroupService groupService)
+    public UserPermissionService(
+        IUserPermissionRepository userPermRepo,
+        IAccountRepository accountRepo,
+        IPermissionGroupService groupService)
     {
-        _db = db;
+        _userPermRepo = userPermRepo;
+        _accountRepo = accountRepo;
         _groupService = groupService;
     }
 
     public async Task<List<UserPermissionDetailDto>> GetByAccountIdAsync(
         Guid accountId, CancellationToken ct = default)
     {
-        return await _db.UserPermissions
-            .AsNoTracking()
-            .Where(up => up.AccountId == accountId)
-            .Include(up => up.Permission)
-            .Select(up => UserPermissionMapper.ToDetailDto(up))
-            .ToListAsync(ct);
+        var entities = await _userPermRepo.GetByAccountIdWithPermissionAsync(accountId, ct);
+        return entities.Select(UserPermissionMapper.ToDetailDto).ToList();
     }
 
     public async Task<PagedResult<UserAccountDto>> GetAccountsAsync(
         int page, int pageSize, string? search, CancellationToken ct = default)
     {
-        var query = _db.Accounts
-            .AsNoTracking()
-            .Include(a => a.User)
-            .AsQueryable();
+        var (items, totalCount) = await _accountRepo.GetAllAsync(page, pageSize, search, ct);
 
-        if (!string.IsNullOrWhiteSpace(search))
+        return new PagedResult<UserAccountDto>
         {
-            var s = search.Trim().ToLower();
-            query = query.Where(a =>
-                a.Username.ToLower().Contains(s) ||
-                a.Email.ToLower().Contains(s) ||
-                (a.User != null && a.User.FullName != null && a.User.FullName.ToLower().Contains(s)));
-        }
-
-        var totalCount = await query.CountAsync(ct);
-
-        var items = await query
-            .OrderByDescending(a => a.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(a => new UserAccountDto
+            Items = items.Select(a => new UserAccountDto
             {
                 AccountId = a.Id,
                 Username = a.Username,
@@ -69,12 +53,7 @@ public class UserPermissionService : IUserPermissionService
                 Role = a.Role,
                 IsActive = a.IsActive,
                 FullName = a.User != null ? a.User.FullName : null
-            })
-            .ToListAsync(ct);
-
-        return new PagedResult<UserAccountDto>
-        {
-            Items = items,
+            }).ToList(),
             TotalCount = totalCount,
             Page = page,
             PageSize = pageSize
@@ -87,11 +66,7 @@ public class UserPermissionService : IUserPermissionService
         if (dto.PermissionIds == null || dto.PermissionIds.Count == 0)
             return await GetByAccountIdAsync(dto.AccountId, ct);
 
-        var existingIds = await _db.UserPermissions
-            .Where(up => up.AccountId == dto.AccountId && dto.PermissionIds.Contains(up.PermissionId))
-            .Select(up => up.PermissionId)
-            .ToListAsync(ct);
-
+        var existingIds = await _userPermRepo.GetExistingIdsAsync(dto.AccountId, dto.PermissionIds, ct);
         var toAdd = dto.PermissionIds.Except(existingIds).ToList();
         if (toAdd.Count == 0)
             return await GetByAccountIdAsync(dto.AccountId, ct);
@@ -106,8 +81,8 @@ public class UserPermissionService : IUserPermissionService
             ExpiresAt = dto.ExpiresAt
         }).ToList();
 
-        _db.UserPermissions.AddRange(newEntries);
-        await _db.SaveChangesAsync(ct);
+        await _userPermRepo.AddRangeAsync(newEntries, ct);
+        await _userPermRepo.SaveChangesAsync(ct);
 
         return await GetByAccountIdAsync(dto.AccountId, ct);
     }
@@ -115,12 +90,12 @@ public class UserPermissionService : IUserPermissionService
     public async Task<bool> RevokePermissionAsync(
         Guid accountId, Guid permissionId, CancellationToken ct = default)
     {
-        var entity = await _db.UserPermissions
-            .FirstOrDefaultAsync(up => up.AccountId == accountId && up.PermissionId == permissionId, ct);
+        var entities = await _userPermRepo.GetByAccountIdAsync(accountId, ct);
+        var entity = entities.FirstOrDefault(up => up.PermissionId == permissionId);
         if (entity == null) return false;
 
-        _db.UserPermissions.Remove(entity);
-        await _db.SaveChangesAsync(ct);
+        await _userPermRepo.RemoveAsync(entity, ct);
+        await _userPermRepo.SaveChangesAsync(ct);
         return true;
     }
 
@@ -134,16 +109,10 @@ public class UserPermissionService : IUserPermissionService
             return new List<UserPermissionDetailDto>();
 
         var permissionIdGuids = group.Permissions.Select(p => p.Id).ToList();
-        var existingIds = await _db.UserPermissions
-            .Where(up => up.AccountId == dto.AccountId && permissionIdGuids.Contains(up.PermissionId))
-            .Select(up => up.PermissionId)
-            .ToListAsync(ct);
-
+        var existingIds = await _userPermRepo.GetExistingIdsAsync(dto.AccountId, permissionIdGuids, ct);
         var toAssign = permissionIdGuids.Except(existingIds).ToList();
         if (toAssign.Count == 0)
-        {
             return await GetByAccountIdAsync(dto.AccountId, ct);
-        }
 
         var now = DateTime.UtcNow;
         var newEntries = toAssign.Select(pid => new UserPermission
@@ -155,8 +124,8 @@ public class UserPermissionService : IUserPermissionService
             ExpiresAt = dto.ExpiresAt
         }).ToList();
 
-        _db.UserPermissions.AddRange(newEntries);
-        await _db.SaveChangesAsync(ct);
+        await _userPermRepo.AddRangeAsync(newEntries, ct);
+        await _userPermRepo.SaveChangesAsync(ct);
 
         return await GetByAccountIdAsync(dto.AccountId, ct);
     }
@@ -170,14 +139,12 @@ public class UserPermissionService : IUserPermissionService
         var permissionIdGuids = group.Permissions.Select(p => p.Id).ToList();
         if (permissionIdGuids.Count == 0) return 0;
 
-        var toRemove = await _db.UserPermissions
-            .Where(up => up.AccountId == accountId && permissionIdGuids.Contains(up.PermissionId))
-            .ToListAsync(ct);
-
+        var allUp = await _userPermRepo.GetByAccountIdAsync(accountId, ct);
+        var toRemove = allUp.Where(up => permissionIdGuids.Contains(up.PermissionId)).ToList();
         if (toRemove.Count == 0) return 0;
 
-        _db.UserPermissions.RemoveRange(toRemove);
-        await _db.SaveChangesAsync(ct);
+        await _userPermRepo.RemoveRangeAsync(toRemove, ct);
+        await _userPermRepo.SaveChangesAsync(ct);
         return toRemove.Count;
     }
 }
