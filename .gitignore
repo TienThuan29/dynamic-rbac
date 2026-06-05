@@ -31,3 +31,5 @@ docker-compose.override.yml
 *.tmp
 *.temp
 *.bak
+
+swo-application-backend/

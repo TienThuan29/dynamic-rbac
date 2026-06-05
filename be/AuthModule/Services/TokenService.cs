@@ -5,6 +5,14 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace AuthModule.Services;
 
+public interface ITokenService
+{
+    string GenerateJwtToken(Guid userId, Guid accountId, string email, string role);
+
+    int ExpirationSeconds { get; }
+}
+
+
 public class TokenService : ITokenService
 {
     private readonly string _jwtSecret;

@@ -44,23 +44,16 @@ public class GatekeeperController : ControllerBase
     {
         var authHeader = request.AuthorizationHeader;
 
-        // ── 1. Extract and validate the Bearer token ──────────────────────────
+        // Extract and validate the Bearer token
         if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Gatekeeper: missing or invalid Authorization header");
             return Ok(GatekeeperResponseDto.Deny("Missing or invalid Authorization header", 401));
         }
 
-        var token = authHeader["Bearer ".Length..].Trim();
-        if (string.IsNullOrEmpty(token))
-        {
-            _logger.LogWarning("Gatekeeper: empty token");
-            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
-        }
+        var token = GetAccessTokenFromHeader(authHeader);
 
-        // ── 2. Decode and validate the JWT (no signature verification here —
-        //     AuthModule's JwtBearer middleware is not in this pipeline, so we
-        //     decode manually and check the signature against the same secret) ─
+        // Decode and validate the JWT 
         Guid userId;
         Guid accountId;
         string email;
@@ -104,21 +97,17 @@ public class GatekeeperController : ControllerBase
             return Ok(GatekeeperResponseDto.Deny("Token validation error", 401));
         }
 
-        // ── 3. Normalize request path ────────────────────────────────────────
-        var normalizedPath = request.Path.StartsWith('/')
-            ? request.Path
-            : "/" + request.Path;
+        // Normalize request path
+        var normalizedPath = request.Path.StartsWith('/') ? request.Path : "/" + request.Path;
 
-        // ── 4. Admin role bypass — Admins can access any endpoint ───────────
+        // Admin role bypass — Admins can access any endpoint 
         if (role.Equals("Admin", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogDebug(
-                "Gatekeeper: Admin role bypass for {Method} {Path}",
-                request.Method, normalizedPath);
+            // _logger.LogDebug("Gatekeeper: Admin role bypass for {Method} {Path}", request.Method, normalizedPath);
             return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
         }
 
-        // ── 5. Check if the endpoint is public ────────────────────────────────
+        // Check if the endpoint is public
         // Fetch active permissions for this HTTP method (small set), then match
         // the actual path against stored route patterns which may contain {param}
         // placeholders — e.g. /api/products/{id} must match /api/products/743bcf48-...
@@ -203,23 +192,30 @@ public class GatekeeperController : ControllerBase
             $"Access denied: no permission for {request.Method} {request.Path}", 403));
     }
 
+    private string GetAccessTokenFromHeader(string? authHeader)
+    {
+        string token = authHeader["Bearer ".Length..].Trim();
+        if (string.IsNullOrEmpty(token))
+        {
+            _logger.LogWarning("Gatekeeper: empty token");
+            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
+        }
+        return token;
+    }
+
     private ClaimsPrincipal ValidateJwt(string token, out Exception? validationException)
     {
         validationException = null;
 
-        var jwtSecret = _configuration["Jwt:Secret"]
-            ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+        var jwtSecret = _configuration["Jwt:Secret"] ?? Environment.GetEnvironmentVariable("JWT_SECRET")
             ?? throw new InvalidOperationException("JWT_SECRET not configured");
-        var jwtIssuer = _configuration["Jwt:Issuer"]
-            ?? Environment.GetEnvironmentVariable("JWT_ISSUER")
+        var jwtIssuer = _configuration["Jwt:Issuer"] ?? Environment.GetEnvironmentVariable("JWT_ISSUER")
             ?? "swovnai";
-        var jwtAudience = _configuration["Jwt:Audience"]
-            ?? Environment.GetEnvironmentVariable("JWT_AUDIENCE")
+        var jwtAudience = _configuration["Jwt:Audience"] ?? Environment.GetEnvironmentVariable("JWT_AUDIENCE")
             ?? "swovnai";
 
         var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-        var key = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
-            System.Text.Encoding.UTF8.GetBytes(jwtSecret));
+        var key = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSecret));
 
         try
         {
