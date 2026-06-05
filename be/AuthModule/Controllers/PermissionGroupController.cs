@@ -1,5 +1,7 @@
 using AuthModule.Attributes;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,7 +28,7 @@ public class PermissionGroupController : ControllerBase
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "List Permission Groups",
         Description = "Retrieve a paginated list of all permission groups.")]
-    public async Task<ActionResult<PagedResult<PermissionGroupDto>>> GetAll(
+    public async Task<ActionResult<PagedResult<PermissionGroupResponse>>> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? search = null,
@@ -42,37 +44,31 @@ public class PermissionGroupController : ControllerBase
     [HttpGet("{id:guid}")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Get Permission Group",
-        Description = "Retrieve the details of a single permission group by its ID.")]
-    public async Task<ActionResult<PermissionGroupDto>> GetById(Guid id, CancellationToken ct = default)
+        Description = "Retrieve the details of a single permission group by its ID, including its resolved permissions.")]
+    public async Task<ActionResult<PermissionGroupResponse>> GetById(Guid id, CancellationToken ct = default)
     {
         var result = await _groupService.GetByIdAsync(id, ct);
         if (result == null)
-            return NotFound(new { message = $"PermissionGroup {id} not found." });
+            return NotFound(new { message = $"Permission group {id} not found." });
         return Ok(result);
     }
 
     [HttpPost]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Create Permission Group",
-        Description = "Create a new permission group with a name and optional permission assignments.")]
-    public async Task<ActionResult<PermissionGroupDto>> Create(
-        [FromBody] CreatePermissionGroupDto dto,
+        Description = "Create a new permission group with a list of permission IDs.")]
+    public async Task<ActionResult<PermissionGroupResponse>> Create(
+        [FromBody] CreatePermissionGroupRequest dto,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(dto.GroupName))
-            return BadRequest(new { message = "GroupName is required." });
-
         try
         {
             var createdBy = GetCurrentUserId();
             var result = await _groupService.CreateAsync(dto, createdBy, ct);
-            _logger.LogInformation(
-                "PermissionGroup {Id} created by {CreatedBy}.", result.Id, createdBy);
             return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            _logger.LogError(ex, "Failed to create PermissionGroup.");
             return BadRequest(new { message = ex.Message });
         }
     }
@@ -80,27 +76,24 @@ public class PermissionGroupController : ControllerBase
     [HttpPut("{id:guid}")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Update Permission Group",
-        Description = "Update the name or permission assignments of an existing permission group.")]
-    public async Task<ActionResult<PermissionGroupDto>> Update(
+        Description = "Update the name, description, or permission list of an existing permission group.")]
+    public async Task<ActionResult<PermissionGroupResponse>> Update(
         Guid id,
-        [FromBody] UpdatePermissionGroupDto dto,
+        [FromBody] UpdatePermissionGroupRequest dto,
         CancellationToken ct = default)
     {
         try
         {
             var updatedBy = GetCurrentUserId();
             var result = await _groupService.UpdateAsync(id, dto, updatedBy, ct);
-            _logger.LogInformation(
-                "PermissionGroup {Id} updated by {UpdatedBy}.", id, updatedBy);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
         {
             return NotFound(new { message = ex.Message });
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            _logger.LogError(ex, "Failed to update PermissionGroup {Id}.", id);
             return BadRequest(new { message = ex.Message });
         }
     }
@@ -108,20 +101,25 @@ public class PermissionGroupController : ControllerBase
     [HttpDelete("{id:guid}")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Delete Permission Group",
-        Description = "Permanently delete a permission group by its ID.")]
+        Description = "Permanently delete a permission group. Does NOT delete the permissions inside it.")]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct = default)
     {
-        var deleted = await _groupService.DeleteAsync(id, ct);
-        if (!deleted)
-            return NotFound(new { message = $"PermissionGroup {id} not found." });
-
-        _logger.LogInformation("PermissionGroup {Id} deleted.", id);
-        return NoContent();
+        try
+        {
+            var deleted = await _groupService.DeleteAsync(id, ct);
+            if (!deleted)
+                return NotFound(new { message = $"Permission group {id} not found." });
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     private Guid? GetCurrentUserId()
     {
-        var sub = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        return Guid.TryParse(sub, out var id) ? id : null;
+        var claim = User.FindFirst("userId")?.Value;
+        return Guid.TryParse(claim, out var id) ? id : null;
     }
 }

@@ -1,17 +1,19 @@
 using AuthModule.Dal.Entities;
 using AuthModule.Dal.Repositories;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Mappers;
 
 namespace AuthModule.Services;
 
 public interface IUserPermissionService
 {
-    Task<List<UserPermissionDetailDto>> GetByAccountIdAsync(Guid accountId, CancellationToken ct = default);
-    Task<PagedResult<UserAccountDto>> GetAccountsAsync(int page, int pageSize, string? search, CancellationToken ct = default);
-    Task<List<UserPermissionDetailDto>> AssignPermissionAsync(AssignUserPermissionDto dto, Guid assignedBy, CancellationToken ct = default);
+    Task<List<UserPermissionDetailResponse>> GetByAccountIdAsync(Guid accountId, CancellationToken ct = default);
+    Task<PagedResult<UserAccountResponse>> GetAccountsAsync(int page, int pageSize, string? search, CancellationToken ct = default);
+    Task<List<UserPermissionDetailResponse>> AssignPermissionAsync(AssignUserPermissionRequest dto, Guid assignedBy, CancellationToken ct = default);
     Task<bool> RevokePermissionAsync(Guid accountId, Guid permissionId, CancellationToken ct = default);
-    Task<List<UserPermissionDetailDto>> AssignByGroupAsync(AssignByGroupDto dto, Guid assignedBy, CancellationToken ct = default);
+    Task<List<UserPermissionDetailResponse>> AssignByGroupAsync(AssignByGroupRequest dto, Guid assignedBy, CancellationToken ct = default);
     Task<int> RevokeAllByGroupAsync(Guid accountId, Guid permissionGroupId, CancellationToken ct = default);
 }
 
@@ -31,21 +33,21 @@ public class UserPermissionService : IUserPermissionService
         _groupService = groupService;
     }
 
-    public async Task<List<UserPermissionDetailDto>> GetByAccountIdAsync(
+    public async Task<List<UserPermissionDetailResponse>> GetByAccountIdAsync(
         Guid accountId, CancellationToken ct = default)
     {
         var entities = await _userPermRepo.GetByAccountIdWithPermissionAsync(accountId, ct);
-        return entities.Select(UserPermissionMapper.ToDetailDto).ToList();
+        return entities.Select(UserPermissionMapper.ToDetailResponse).ToList();
     }
 
-    public async Task<PagedResult<UserAccountDto>> GetAccountsAsync(
+    public async Task<PagedResult<UserAccountResponse>> GetAccountsAsync(
         int page, int pageSize, string? search, CancellationToken ct = default)
     {
         var (items, totalCount) = await _accountRepo.GetAllAsync(page, pageSize, search, ct);
 
-        return new PagedResult<UserAccountDto>
+        return new PagedResult<UserAccountResponse>
         {
-            Items = items.Select(a => new UserAccountDto
+            Items = items.Select(a => new UserAccountResponse
             {
                 AccountId = a.Id,
                 Username = a.Username,
@@ -60,8 +62,8 @@ public class UserPermissionService : IUserPermissionService
         };
     }
 
-    public async Task<List<UserPermissionDetailDto>> AssignPermissionAsync(
-        AssignUserPermissionDto dto, Guid assignedBy, CancellationToken ct = default)
+    public async Task<List<UserPermissionDetailResponse>> AssignPermissionAsync(
+        AssignUserPermissionRequest dto, Guid assignedBy, CancellationToken ct = default)
     {
         if (dto.PermissionIds == null || dto.PermissionIds.Count == 0)
             return await GetByAccountIdAsync(dto.AccountId, ct);
@@ -99,14 +101,14 @@ public class UserPermissionService : IUserPermissionService
         return true;
     }
 
-    public async Task<List<UserPermissionDetailDto>> AssignByGroupAsync(
-        AssignByGroupDto dto, Guid assignedBy, CancellationToken ct = default)
+    public async Task<List<UserPermissionDetailResponse>> AssignByGroupAsync(
+        AssignByGroupRequest dto, Guid assignedBy, CancellationToken ct = default)
     {
         var group = await _groupService.GetByIdAsync(dto.PermissionGroupId, ct)
             ?? throw new KeyNotFoundException($"PermissionGroup {dto.PermissionGroupId} not found.");
 
         if (group.Permissions.Count == 0)
-            return new List<UserPermissionDetailDto>();
+            return new List<UserPermissionDetailResponse>();
 
         var permissionIdGuids = group.Permissions.Select(p => p.Id).ToList();
         var existingIds = await _userPermRepo.GetExistingIdsAsync(dto.AccountId, permissionIdGuids, ct);

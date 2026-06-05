@@ -1,10 +1,10 @@
-namespace AuthModule.DTOs;
+namespace AuthModule.DTOs.Responses;
 
 /// <summary>
 /// Request sent from Gateway to AuthModule gatekeeper to validate a JWT
 /// and check whether the user has permission for the requested resource.
 /// </summary>
-public class GatekeeperRequestDto
+public class GatekeeperRequest
 {
     /// <summary>
     /// The Authorization header value (e.g. "Bearer eyJ...").
@@ -30,7 +30,7 @@ public class GatekeeperRequestDto
 /// <summary>
 /// Response from AuthModule gatekeeper back to the Gateway.
 /// </summary>
-public class GatekeeperResponseDto
+public class GatekeeperResponse
 {
     /// <summary>
     /// True when the token is valid and the user has permission.
@@ -67,7 +67,7 @@ public class GatekeeperResponseDto
     /// </summary>
     public string? Role { get; set; }
 
-    public static GatekeeperResponseDto Allow(Guid userId, Guid accountId, string email, string role) =>
+    public static GatekeeperResponse Allow(Guid userId, Guid accountId, string email, string role) =>
         new()
         {
             Allowed = true,
@@ -78,7 +78,7 @@ public class GatekeeperResponseDto
             Role = role
         };
 
-    public static GatekeeperResponseDto Deny(string reason, int statusCode = 403) =>
+    public static GatekeeperResponse Deny(string reason, int statusCode = 403) =>
         new()
         {
             Allowed = false,

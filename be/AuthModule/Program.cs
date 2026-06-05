@@ -22,11 +22,13 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IUserPermissionRepository, UserPermissionRepository>();
 builder.Services.AddScoped<IPermissionGroupRepository, PermissionGroupRepository>();
+builder.Services.AddScoped<ITokenRepository, TokenRepository>();
+builder.Services.AddScoped<ITokenPermissionRepository, TokenPermissionRepository>();
 
 // Services
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IJwtUtil, JwtUtil>();
-builder.Services.AddScoped<ITokenService, JwtUtil>();
+builder.Services.AddScoped<ITokenAppService, TokenAppService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IPermissionGroupService, PermissionGroupService>();
 builder.Services.AddScoped<IUserPermissionService, UserPermissionService>();

@@ -1,13 +1,14 @@
 using AuthModule.Dal.Entities;
 using AuthModule.Dal.Repositories;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 
 namespace AuthModule.Services;
 
 public interface IAuthService
 {
-    Task<AuthenticatedUserDto> LoginOrCreateUserAsync(LoginDto loginDto, CancellationToken cancellationToken = default);
-    Task<List<UserPermissionDto>> GetPermissionsAsync(Guid accountId, CancellationToken cancellationToken = default);
+    Task<AuthenticatedUserResponse> LoginOrCreateUserAsync(LoginRequest loginDto, CancellationToken cancellationToken = default);
+    Task<List<UserPermissionResponse>> GetPermissionsAsync(Guid accountId, CancellationToken cancellationToken = default);
 }
 
 
@@ -27,8 +28,8 @@ public class AuthService : IAuthService
         _userPermRepo = userPermRepo;
     }
 
-    public async Task<AuthenticatedUserDto> LoginOrCreateUserAsync(
-        LoginDto loginDto, CancellationToken ct = default)
+    public async Task<AuthenticatedUserResponse> LoginOrCreateUserAsync(
+        LoginRequest loginDto, CancellationToken ct = default)
     {
         var existingAccount = await _accountRepo.GetByEntraIdAsync(loginDto.EntraIdObjectId, ct);
 
@@ -37,7 +38,7 @@ public class AuthService : IAuthService
             UpdateExistingAccount(existingAccount, loginDto);
             await _accountRepo.SaveChangesAsync(ct);
 
-            return new AuthenticatedUserDto
+            return new AuthenticatedUserResponse
             {
                 UserId = existingAccount.User.Id,
                 AccountId = existingAccount.Id,
@@ -74,7 +75,7 @@ public class AuthService : IAuthService
         await _userRepo.AddAsync(newUser, ct);
         await _accountRepo.SaveChangesAsync(ct);
 
-        return new AuthenticatedUserDto
+        return new AuthenticatedUserResponse
         {
             UserId = newUser.Id,
             AccountId = newAccount.Id,
@@ -85,7 +86,7 @@ public class AuthService : IAuthService
         };
     }
 
-    public async Task<List<UserPermissionDto>> GetPermissionsAsync(
+    public async Task<List<UserPermissionResponse>> GetPermissionsAsync(
         Guid accountId, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
@@ -95,7 +96,7 @@ public class AuthService : IAuthService
             .ContinueWith(t => t.Result
                 .Where(up => up.ExpiresAt == null || up.ExpiresAt > now)
                 .Where(up => up.Permission.IsActive)
-                .Select(up => new UserPermissionDto
+                .Select(up => new UserPermissionResponse
                 {
                     AccountId = up.AccountId,
                     PermissionId = up.PermissionId,
@@ -110,7 +111,7 @@ public class AuthService : IAuthService
                 .ToList(), ct);
     }
 
-    private static void UpdateExistingAccount(Account account, LoginDto loginDto)
+    private static void UpdateExistingAccount(Account account, LoginRequest loginDto)
     {
         account.UpdatedAt = DateTime.UtcNow;
         account.Email = loginDto.Email;

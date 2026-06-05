@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using AuthModule.Attributes;
 using AuthModule.Dal.Repositories;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Responses;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -38,27 +38,25 @@ public class GatekeeperController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<GatekeeperResponseDto>> CheckAccess(
-        [FromBody] GatekeeperRequestDto request,
+    public async Task<ActionResult<GatekeeperResponse>> CheckAccess(
+        [FromBody] GatekeeperRequest request,
         CancellationToken ct = default)
     {
         var authHeader = request.AuthorizationHeader;
 
-        // Extract and validate the Bearer token
         if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Gatekeeper: missing or invalid Authorization header");
-            return Ok(GatekeeperResponseDto.Deny("Missing or invalid Authorization header", 401));
+            return Ok(GatekeeperResponse.Deny("Missing or invalid Authorization header", 401));
         }
 
         var token = authHeader["Bearer ".Length..].Trim();
         if (string.IsNullOrEmpty(token))
         {
             _logger.LogWarning("Gatekeeper: empty token");
-            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
+            return Ok(GatekeeperResponse.Deny("Token is empty", 401));
         }
 
-        // Decode and validate the JWT
         Guid userId;
         Guid accountId;
         string email;
@@ -70,7 +68,7 @@ public class GatekeeperController : ControllerBase
             if (validationException != null)
             {
                 _logger.LogWarning(validationException, "Gatekeeper: JWT validation failed");
-                return Ok(GatekeeperResponseDto.Deny("Invalid or expired token", 401));
+                return Ok(GatekeeperResponse.Deny("Invalid or expired token", 401));
             }
 
             var userIdClaim = principal.FindFirst("userId")?.Value
@@ -84,13 +82,13 @@ public class GatekeeperController : ControllerBase
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
             {
                 _logger.LogWarning("Gatekeeper: missing or invalid userId claim");
-                return Ok(GatekeeperResponseDto.Deny("Token missing valid userId claim", 401));
+                return Ok(GatekeeperResponse.Deny("Token missing valid userId claim", 401));
             }
 
             if (string.IsNullOrEmpty(accountIdClaim) || !Guid.TryParse(accountIdClaim, out accountId))
             {
                 _logger.LogWarning("Gatekeeper: missing or invalid accountId claim");
-                return Ok(GatekeeperResponseDto.Deny("Token missing valid accountId claim", 401));
+                return Ok(GatekeeperResponse.Deny("Token missing valid accountId claim", 401));
             }
 
             email = emailClaim ?? string.Empty;
@@ -99,66 +97,52 @@ public class GatekeeperController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Gatekeeper: unexpected error during token validation");
-            return Ok(GatekeeperResponseDto.Deny("Token validation error", 401));
+            return Ok(GatekeeperResponse.Deny("Token validation error", 401));
         }
 
-        // Normalize request path
-        var normalizedPath = request.Path.StartsWith('/') ? request.Path : "/" + request.Path;
+        var result = await AuthorizeRequestAsync(accountId, role, request.Method, request.Path, ct);
 
-        // Admin role bypass — Admins can access any endpoint
+        if (result.Allowed)
+            return Ok(GatekeeperResponse.Allow(userId, accountId, email, role));
+
+        return Ok(GatekeeperResponse.Deny(result.Reason ?? "Access denied", result.StatusCode));
+    }
+
+    private async Task<AccessResult> AuthorizeRequestAsync(
+        Guid accountId,
+        string role,
+        string method,
+        string path,
+        CancellationToken ct)
+    {
+        var normalizedPath = path.StartsWith('/') ? path : "/" + path;
+
         if (role.Equals("Admin", StringComparison.OrdinalIgnoreCase))
-        {
-            return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
-        }
+            return AccessResult.Allow();
 
-        // Check if the endpoint is public
-        // Fetch active permissions for this HTTP method (small set), then match
-        // the actual path against stored route patterns which may contain {param}
-        // placeholders — e.g. /api/products/{id} must match /api/products/743bcf48-...
-        var allPermissions = await _permissionRepo.GetAllActiveForGatekeeperAsync(request.Method, ct);
-        var methodCandidates = allPermissions
+        var allPermissions = await _permissionRepo.GetAllActiveForGatekeeperAsync(method, ct);
+        var permission = allPermissions
             .Where(p => RoutePatternMatches(p.Endpoint!, normalizedPath))
-            .ToList();
-
-        var permission = methodCandidates.FirstOrDefault(p =>
-            RoutePatternMatches(p.Endpoint!, normalizedPath));
+            .FirstOrDefault();
 
         if (permission == null)
         {
             _logger.LogWarning(
                 "Gatekeeper: no permission record found for {Method} {Path}",
-                request.Method, normalizedPath);
-            return Ok(GatekeeperResponseDto.Deny(
-                $"No permission record for {request.Method} {request.Path}", 403));
+                method, normalizedPath);
+            return AccessResult.Deny($"No permission record for {method} {path}");
         }
 
-        // Public endpoints are always allowed
         if (permission.IsPublic)
-        {
-            _logger.LogDebug(
-                "Gatekeeper: {Method} {Path} is public — allowed",
-                request.Method, normalizedPath);
-            return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
-        }
+            return AccessResult.Allow();
 
-        // ── Check user permission in UserPermissions table ─────────────────
-        //    Supports two grant modes:
-        //    a) Exact match — user has this specific PermissionId
-        //    b) Wildcard match — user has [resource]:admin which covers every action on that resource
         var now = DateTime.UtcNow;
 
-        // First, check for exact permission match
         var hasExactPermission = await _userPermRepo.AnyAsync(accountId, permission.Id, now, ct);
 
         if (hasExactPermission)
-        {
-            _logger.LogDebug(
-                "Gatekeeper: account {AccountId} allowed (exact) for {Method} {Path}",
-                accountId, request.Method, normalizedPath);
-            return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
-        }
+            return AccessResult.Allow();
 
-        // Fallback: check [resource]:admin
         var resource = ExtractResource(normalizedPath);
         if (resource is not null)
         {
@@ -169,16 +153,15 @@ public class GatekeeperController : ControllerBase
             {
                 _logger.LogDebug(
                     "Gatekeeper: account {AccountId} allowed (admin {AdminCode}) for {Method} {Path}",
-                    accountId, adminCode, request.Method, normalizedPath);
-                return Ok(GatekeeperResponseDto.Allow(userId, accountId, email, role));
+                    accountId, adminCode, method, normalizedPath);
+                return AccessResult.Allow();
             }
         }
 
         _logger.LogWarning(
             "Gatekeeper: account {AccountId} denied for {Method} {Path}",
-            accountId, request.Method, normalizedPath);
-        return Ok(GatekeeperResponseDto.Deny(
-            $"Access denied: no permission for {request.Method} {request.Path}", 403));
+            accountId, method, normalizedPath);
+        return AccessResult.Deny($"Access denied: no permission for {method} {path}");
     }
 
     private ClaimsPrincipal ValidateJwt(string token, out Exception? validationException)
@@ -219,11 +202,6 @@ public class GatekeeperController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Returns true when <paramref name="path"/> matches the stored route pattern.
-    /// Segments wrapped in { } are treated as single-segment wildcards, so
-    /// /api/products/{id} matches /api/products/743bcf48-ea9d-4adf-a6ab-9a1218305e34.
-    /// </summary>
     private static bool RoutePatternMatches(string pattern, string path)
     {
         var patSegs  = pattern.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -233,7 +211,6 @@ public class GatekeeperController : ControllerBase
 
         for (var i = 0; i < patSegs.Length; i++)
         {
-            // {param} — wildcard, matches any single segment
             if (patSegs[i].StartsWith('{') && patSegs[i].EndsWith('}')) continue;
 
             if (!patSegs[i].Equals(pathSegs[i], StringComparison.OrdinalIgnoreCase))
@@ -243,11 +220,6 @@ public class GatekeeperController : ControllerBase
         return true;
     }
 
-    /// <summary>
-    /// Extracts the top-level resource name from a route path.
-    /// /api/products/{id}/stock  →  "products"
-    /// /api/users/{id}           →  "users"
-    /// </summary>
     private static string? ExtractResource(string path)
     {
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -263,4 +235,10 @@ public class GatekeeperController : ControllerBase
 
         return null;
     }
+}
+
+internal record AccessResult(bool Allowed, string? Reason = null, int StatusCode = 403)
+{
+    public static AccessResult Allow() => new(true);
+    public static AccessResult Deny(string reason, int statusCode = 403) => new(false, reason, statusCode);
 }

@@ -1,12 +1,6 @@
-namespace AuthModule.DTOs;
+namespace AuthModule.DTOs.Responses;
 
-public class LoginDto
-{
-    public string Email { get; set; } = string.Empty;
-    public string EntraIdObjectId { get; set; } = string.Empty;
-}
-
-public class LoginResponseDto
+public class LoginResponse
 {
     public Guid UserId { get; set; }
     public Guid AccountId { get; set; }
@@ -16,10 +10,10 @@ public class LoginResponseDto
     public bool IsNewAccount { get; set; }
     public string AccessToken { get; set; } = string.Empty;
     public int ExpiresIn { get; set; }
-    public List<UserPermissionDto> Permissions { get; set; } = new();
+    public List<UserPermissionResponse> Permissions { get; set; } = new();
 }
 
-public class AuthenticatedUserDto
+public class AuthenticatedUserResponse
 {
     public Guid UserId { get; set; }
     public Guid AccountId { get; set; }
@@ -29,7 +23,7 @@ public class AuthenticatedUserDto
     public bool IsNewAccount { get; set; }
 }
 
-public class UserPermissionDto
+public class UserPermissionResponse
 {
     public Guid AccountId { get; set; }
     public Guid PermissionId { get; set; }

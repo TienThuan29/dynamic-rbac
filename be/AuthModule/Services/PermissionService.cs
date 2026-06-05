@@ -1,17 +1,19 @@
 using AuthModule.Dal.Repositories;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Mappers;
 
 namespace AuthModule.Services;
 
 public interface IPermissionService
 {
-    Task<PermissionDto?> GetByIdAsync(Guid id, CancellationToken ct = default);
-    Task<PagedResult<PermissionDto>> GetAllAsync(int page, int pageSize, string? search, string? method, bool? isSystem, bool? isActive, string? resource, CancellationToken ct = default);
+    Task<PermissionResponse?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<PagedResult<PermissionResponse>> GetAllAsync(int page, int pageSize, string? search, string? method, bool? isSystem, bool? isActive, string? resource, CancellationToken ct = default);
     Task<List<string>> GetDistinctResourcesAsync(CancellationToken ct = default);
-    Task<PermissionDto> UpdateAsync(Guid id, UpdatePermissionDto dto, Guid? updatedBy, CancellationToken ct = default);
+    Task<PermissionResponse> UpdateAsync(Guid id, UpdatePermissionRequest dto, Guid? updatedBy, CancellationToken ct = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct = default);
-    Task<List<PermissionDto>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
+    Task<List<PermissionResponse>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
 }
 
 public class PermissionService : IPermissionService
@@ -23,13 +25,13 @@ public class PermissionService : IPermissionService
         _permissionRepo = permissionRepo;
     }
 
-    public async Task<PermissionDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    public async Task<PermissionResponse?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         var entity = await _permissionRepo.GetByIdAsync(id, ct);
-        return entity == null ? null : PermissionMapper.ToDto(entity);
+        return entity == null ? null : PermissionMapper.ToResponse(entity);
     }
 
-    public async Task<PagedResult<PermissionDto>> GetAllAsync(
+    public async Task<PagedResult<PermissionResponse>> GetAllAsync(
         int page, int pageSize, string? search,
         string? method, bool? isSystem, bool? isActive,
         string? resource, CancellationToken ct = default)
@@ -37,17 +39,17 @@ public class PermissionService : IPermissionService
         var (items, totalCount) = await _permissionRepo.GetAllAsync(
             page, pageSize, search, method, isSystem, isActive, resource, ct);
 
-        return new PagedResult<PermissionDto>
+        return new PagedResult<PermissionResponse>
         {
-            Items = items.Select(PermissionMapper.ToDto).ToList(),
+            Items = items.Select(PermissionMapper.ToResponse).ToList(),
             TotalCount = totalCount,
             Page = page,
             PageSize = pageSize
         };
     }
 
-    public async Task<PermissionDto> UpdateAsync(
-        Guid id, UpdatePermissionDto dto, Guid? updatedBy, CancellationToken ct = default)
+    public async Task<PermissionResponse> UpdateAsync(
+        Guid id, UpdatePermissionRequest dto, Guid? updatedBy, CancellationToken ct = default)
     {
         var entity = await _permissionRepo.GetByIdWithTrackingAsync(id, ct)
             ?? throw new KeyNotFoundException($"Permission {id} not found.");
@@ -75,7 +77,7 @@ public class PermissionService : IPermissionService
         entity.UpdatedAt = DateTime.UtcNow;
 
         await _permissionRepo.SaveChangesAsync(ct);
-        return PermissionMapper.ToDto(entity);
+        return PermissionMapper.ToResponse(entity);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
@@ -90,10 +92,10 @@ public class PermissionService : IPermissionService
         return true;
     }
 
-    public async Task<List<PermissionDto>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    public async Task<List<PermissionResponse>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
     {
         var entities = await _permissionRepo.GetByIdsAsync(ids, ct);
-        return entities.Select(PermissionMapper.ToDto).ToList();
+        return entities.Select(PermissionMapper.ToResponse).ToList();
     }
 
     public async Task<List<string>> GetDistinctResourcesAsync(CancellationToken ct = default)
