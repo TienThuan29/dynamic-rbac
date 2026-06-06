@@ -33,3 +33,5 @@ docker-compose.override.yml
 *.bak
 
 swo-application-backend/
+
+deploy-output.env

@@ -9,7 +9,6 @@
 **/publish
 **/.idea
 **/*.md
-**/Dockerfile*
 **/docker-compose*.yml
 **/postgres-init
 **/*.user

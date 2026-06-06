@@ -26,7 +26,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 Saspnet
+    adduser --system --uid 1001 saspnet
 
 COPY --from=build --chown=saspnet:nodejs /app/dist ./dist
 
