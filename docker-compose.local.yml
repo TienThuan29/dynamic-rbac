@@ -22,13 +22,15 @@ services:
       context: ./be/AuthModule
       dockerfile: Dockerfile
     container_name: authmodule_local
+    env_file:
+      - ./be/.env.prod
     environment:
       ConnectionStrings__DefaultConnection: >-
-        Host=pg-tienthuan-db.postgres.database.azure.com;
-        Port=5432;
-        Database=postgres;
-        Username=pgtienthuandb;
-        Password=29112004@Thuan;
+        Host=${PGHOST};
+        Port=${PGPORT};
+        Database=${POSTGRES_DB};
+        Username=${POSTGRES_USER};
+        Password=${POSTGRES_PASSWORD};
         Ssl Mode=Require
       JWT_SECRET: xRsbQCknWZriINldt02Gjp3UaOOByM9Eoqanqz9fMT1
       JWT_ISSUER: swovnai
@@ -49,13 +51,15 @@ services:
       context: ./be/MainModule
       dockerfile: Dockerfile
     container_name: mainmodule_local
+    env_file:
+      - ./be/.env.prod
     environment:
       ConnectionStrings__DefaultConnection: >-
-        Host=pg-tienthuan-db.postgres.database.azure.com;
-        Port=5432;
-        Database=postgres;
-        Username=pgtienthuandb;
-        Password=29112004@Thuan;
+        Host=${PGHOST};
+        Port=${PGPORT};
+        Database=${POSTGRES_DB};
+        Username=${POSTGRES_USER};
+        Password=${POSTGRES_PASSWORD};
         Ssl Mode=Require
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:8080
