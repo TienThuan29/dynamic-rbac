@@ -3,10 +3,19 @@ using Yarp.ReverseProxy.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Gateway mode: "Local" (use GatewayAuthMiddleware) or "APIM" (skip, let APIM handle auth)
+var gatewayMode = builder.Configuration["Gateway:Mode"]
+    ?? Environment.GetEnvironmentVariable("GATEWAY_MODE")
+    ?? "Local";
+
+var authModuleUrl = builder.Configuration["Gateway:AuthModuleUrl"]
+    ?? Environment.GetEnvironmentVariable("AUTH_MODULE_URL")
+    ?? "http://localhost:5001";
+
 // Named HttpClient for calling AuthModule gatekeeper
 builder.Services.AddHttpClient("AuthModule", client =>
 {
-    client.BaseAddress = new Uri("http://localhost:5001");
+    client.BaseAddress = new Uri(authModuleUrl);
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
@@ -32,9 +41,11 @@ app.Use(async (context, next) =>
     }
 });
 
-// GatewayAuthMiddleware runs BEFORE the reverse proxy so it can
-// validate auth and inject identity headers before forwarding.
-app.UseGatewayAuth();
+// Only enable LocalGateway auth when not using APIM
+if (!gatewayMode.Equals("APIM", StringComparison.OrdinalIgnoreCase))
+{
+    app.UseGatewayAuth();
+}
 
 app.MapReverseProxy();
 

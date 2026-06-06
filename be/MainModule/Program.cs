@@ -1,5 +1,6 @@
 using MainModule.Data;
 using MainModule.Extensions;
+using MainModule.Middleware;
 using MainModule.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,6 +16,10 @@ builder.Services.AddDbContext<MainDbContext>(options =>
 builder.Services.AddScoped<IProductService, ProductService>();
 
 var app = builder.Build();
+
+// Read identity from headers injected by LocalGateway (dev) or APIM (production).
+// Falls back to X-APIM-* headers from Azure API Management.
+app.UseMiddleware<IdentityMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {

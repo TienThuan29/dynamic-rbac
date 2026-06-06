@@ -1,24 +1,28 @@
 version: "3.9"
 
-# docker-compose.yml — Full local development environment
+# docker-compose.azure.yml — Local development using Azure Container Registry images
 #
 # Prerequisites:
-#   1. Copy be/.env.example to be/.env and fill in values
-#   2. docker compose up
+#   1. az acr login --name dynamicrbac
+#   2. ./scripts/build-push.sh dynamicrbac.azurecr.io <tag>
+#   3. docker compose -f docker-compose.azure.yml up
 #
-# Services:
-#   postgres     — PostgreSQL database
-#   authmodule   — AuthModule (port 5001)
-#   mainmodule   — MainModule (port 5002)
-#   localgateway — LocalGateway / YARP proxy (port 5000)
-#   frontend     — React frontend (port 3000)
-#
-# Environment: set vars in be/.env
+# Environment: set vars in .env.azure or export before running:
+#   ACR_SERVER       = dynamicrbac.azurecr.io
+#   IMAGE_TAG        = latest (or a specific tag)
+#   POSTGRES_HOST    = your-pg-server.postgres.database.azure.com
+#   POSTGRES_USER    = youruser
+#   POSTGRES_PASSWORD = yourpassword
+#   POSTGRES_DB      = postgres
+#   JWT_SECRET       = your-minimum-32-character-secret-key
+#   GATEWAY_MODE     = Local (or APIM)
+#   AUTH_MODULE_URL  = http://authmodule:8080
+#   MAIN_MODULE_URL  = http://mainmodule:8080
 
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: postgres_db
+    container_name: postgres_azure_dev
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yourpassword}
@@ -26,10 +30,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres-init/init.sql:/docker-entrypoint-initdb.d/init.sql
-    env_file:
-      - .env
+      - postgres_data_azure:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
@@ -37,21 +38,19 @@ services:
       retries: 5
 
   authmodule:
-    build:
-      context: ./AuthModule
-      dockerfile: Dockerfile
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/authmodule:${IMAGE_TAG:-latest}
     container_name: authmodule
     environment:
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;
-        Port=5432;
+        Host=${POSTGRES_HOST:-localhost};
+        Port=${POSTGRES_PORT:-5432};
         Database=${POSTGRES_DB:-postgres};
         Username=${POSTGRES_USER:-postgres};
         Password=${POSTGRES_PASSWORD:-yourpassword}
-      JWT_SECRET: ${JWT_SECRET:-changeme}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_ISSUER: ${JWT_ISSUER:-swovnai}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-swovnai}
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ASPNETCORE_URLS: http://+:8080
     ports:
       - "5001:8080"
@@ -65,18 +64,16 @@ services:
       retries: 3
 
   mainmodule:
-    build:
-      context: ./MainModule
-      dockerfile: Dockerfile
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/mainmodule:${IMAGE_TAG:-latest}
     container_name: mainmodule
     environment:
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;
-        Port=5432;
+        Host=${POSTGRES_HOST:-localhost};
+        Port=${POSTGRES_PORT:-5432};
         Database=${POSTGRES_DB:-postgres};
         Username=${POSTGRES_USER:-postgres};
         Password=${POSTGRES_PASSWORD:-yourpassword}
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ASPNETCORE_URLS: http://+:8080
     ports:
       - "5002:8080"
@@ -92,15 +89,13 @@ services:
       retries: 3
 
   localgateway:
-    build:
-      context: ./LocalGateway
-      dockerfile: Dockerfile
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/localgateway:${IMAGE_TAG:-latest}
     container_name: localgateway
     environment:
-      GATEWAY_MODE: Local
-      AUTH_MODULE_URL: http://authmodule:8080
-      MAIN_MODULE_URL: http://mainmodule:8080
-      ASPNETCORE_ENVIRONMENT: Development
+      GATEWAY_MODE: ${GATEWAY_MODE:-Local}
+      AUTH_MODULE_URL: ${AUTH_MODULE_URL:-http://authmodule:8080}
+      MAIN_MODULE_URL: ${MAIN_MODULE_URL:-http://mainmodule:8080}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ASPNETCORE_URLS: http://+:8080
     ports:
       - "5000:8080"
@@ -116,12 +111,7 @@ services:
       retries: 3
 
   frontend:
-    build:
-      context: ../fe
-      dockerfile: Dockerfile
-      args:
-        VITE_MAIN_API_BASE_URL: http://localhost:5000/api
-        VITE_AUTH_API_BASE_URL: http://localhost:5000/api
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/frontend:${IMAGE_TAG:-latest}
     container_name: frontend
     environment:
       NODE_ENV: production
@@ -131,4 +121,4 @@ services:
       - localgateway
 
 volumes:
-  postgres_data:
+  postgres_data_azure:
