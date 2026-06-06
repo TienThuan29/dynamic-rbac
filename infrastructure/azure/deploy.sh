@@ -48,8 +48,8 @@ JWT_AUDIENCE="${JWT_AUDIENCE:-swovnai}"
 
 # Frontend API URL
 APIM_GATEWAY_URL="https://${APIM_NAME}.azure-api.net"
-FE_AUTH_API="${FE_AUTH_API:-https://${APIM_NAME}.azure-api.net/api/auth}"
-FE_MAIN_API="${FE_MAIN_API:-https://${APIM_NAME}.azure-api.net/api/products}"
+FE_AUTH_API="${FE_AUTH_API:-https://${APIM_NAME}.azure-api.net/auth-api}"
+FE_MAIN_API="${FE_MAIN_API:-https://${APIM_NAME}.azure-api.net/products-api}"
 
 echo "=========================================================="
 echo "  DEPLOY: AuthModule + MainModule + Frontend -> Azure"
@@ -73,6 +73,7 @@ ACR_PASSWORD=$(az acr credential show \
   --query "passwords[0].value" \
   -o tsv)
 ACR_USERNAME="$ACR_NAME"
+SUB_ID=$(az account show --query 'id' -o tsv)
 
 # ── 3. Build và push Docker images ──────────────────────────────────────────
 
@@ -202,51 +203,82 @@ echo "    MainModule FQDN: https://${URL_API2}"
 echo ""
 echo "[6/6] Cấu hình API Management (Tắt Subscription Key)..."
 
-# Tạo API cho AuthModule (TẮT YÊU CẦU SUBSCRIPTION)
-echo "    --> Tạo API: api-service-1 (AuthModule) trên APIM..."
+# Lưu ý: serviceUrl PHẢI là host-only (không có path) vì rewrite-uri sẽ thêm path
+# Path trên URL công khai: /auth-api -> backend nhận /api/auth/...
+#                      /products-api -> backend nhận /api/products/...
+echo "    --> Tạo/Cập nhật API: api-service-1 (AuthModule) trên APIM..."
 az apim api create \
   --resource-group "$RESOURCE_GROUP" \
   --service-name "$APIM_NAME" \
   --api-id "api-service-1" \
   --display-name "AuthModule" \
-  --path "api/auth" \
-  --service-url "https://${URL_API1}/api/auth" \
+  --path "auth-api" \
+  --service-url "https://${URL_API1}" \
   --protocols https \
   --subscription-required false \
-  2>/dev/null || echo "    (API api-service-1 có thể đã tồn tại, bỏ qua)"
-
-az apim api update \
+  2>/dev/null || az apim api update \
   --resource-group "$RESOURCE_GROUP" \
   --service-name "$APIM_NAME" \
   --api-id "api-service-1" \
-  --path "api/auth" \
-  --service-url "https://${URL_API1}/api/auth" \
-  --subscription-required false \
-  2>/dev/null || echo "    (Update API api-service-1 thất bại hoặc đã đúng)"
+  --path "auth-api" \
+  --service-url "https://${URL_API1}" \
+  --subscription-required false
 
-# Tạo API cho MainModule (TẮT YÊU CẦU SUBSCRIPTION)
-echo "    --> Tạo API: api-service-2 (MainModule) trên APIM..."
+echo "    --> Tạo/Cập nhật API: api-service-2 (MainModule) trên APIM..."
 az apim api create \
   --resource-group "$RESOURCE_GROUP" \
   --service-name "$APIM_NAME" \
   --api-id "api-service-2" \
   --display-name "MainModule" \
-  --path "api/products" \
-  --service-url "https://${URL_API2}/api/products" \
+  --path "products-api" \
+  --service-url "https://${URL_API2}" \
   --protocols https \
   --subscription-required false \
-  2>/dev/null || echo "    (API api-service-2 có thể đã tồn tại, bỏ qua)"
-
-az apim api update \
+  2>/dev/null || az apim api update \
   --resource-group "$RESOURCE_GROUP" \
   --service-name "$APIM_NAME" \
   --api-id "api-service-2" \
-  --path "api/products" \
-  --service-url "https://${URL_API2}/api/products" \
-  --subscription-required false \
-  2>/dev/null || echo "    (Update API api-service-2 thất bại hoặc đã đúng)"
+  --path "products-api" \
+  --service-url "https://${URL_API2}" \
+  --subscription-required false
+
+# Xóa TẤT CẢ operations cũ (nếu có) để tránh conflict routing
+# NOTE: Nếu không xóa được, script sẽ báo lỗi thay vì tiếp tục âm thầm
+echo "    --> Xóa operations cũ của api-service-1..."
+OP_IDS=$(az apim api operation list \
+  --resource-group "$RESOURCE_GROUP" \
+  --service-name "$APIM_NAME" \
+  --api-id "api-service-1" \
+  -o tsv --query "[].name" 2>/dev/null)
+if [ -n "$OP_IDS" ]; then
+  for OP_NAME in $OP_IDS; do
+    echo "      Xóa operation: $OP_NAME"
+    az rest --method delete \
+      --url "https://management.azure.com/subscriptions/${SUB_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ApiManagement/service/${APIM_NAME}/apis/api-service-1/operations/${OP_NAME}?api-version=2023-03-01-preview"
+  done
+else
+  echo "      (Không có operation cũ)"
+fi
+
+echo "    --> Xóa operations cũ của api-service-2..."
+OP_IDS=$(az apim api operation list \
+  --resource-group "$RESOURCE_GROUP" \
+  --service-name "$APIM_NAME" \
+  --api-id "api-service-2" \
+  -o tsv --query "[].name" 2>/dev/null)
+if [ -n "$OP_IDS" ]; then
+  for OP_NAME in $OP_IDS; do
+    echo "      Xóa operation: $OP_NAME"
+    az rest --method delete \
+      --url "https://management.azure.com/subscriptions/${SUB_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ApiManagement/service/${APIM_NAME}/apis/api-service-2/operations/${OP_NAME}?api-version=2023-03-01-preview"
+  done
+else
+  echo "      (Không có operation cũ)"
+fi
 
 # Tạo Catch-all Operations cho AuthModule
+# APIM vẫn cần operation match phần path còn lại sau API path
+# Nếu không có operation, request /auth-api/login sẽ 404 ngay tại APIM
 echo "    --> Tạo Catch-all Operations cho AuthModule..."
 for method in GET POST PUT DELETE PATCH OPTIONS; do
   az apim api operation create \
@@ -256,8 +288,9 @@ for method in GET POST PUT DELETE PATCH OPTIONS; do
     --operation-id "auth-catchall-${method,,}" \
     --display-name "Catch All $method" \
     --method "$method" \
-    --url-template "/{*path}" 2>/dev/null || true
-done
+    --url-template "/{*path}" \
+    --template-parameters name=path required=true type=string
+  done
 
 # Tạo Catch-all Operations cho MainModule
 echo "    --> Tạo Catch-all Operations cho MainModule..."
@@ -269,8 +302,11 @@ for method in GET POST PUT DELETE PATCH OPTIONS; do
     --operation-id "main-catchall-${method,,}" \
     --display-name "Catch All $method" \
     --method "$method" \
-    --url-template "/{*path}" 2>/dev/null || true
-done
+    --url-template "/{*path}" \
+    --template-parameters name=path required=true type=string
+  done
+
+echo "    --> Routing dùng catch-all operations + rewrite-uri ở API-level..."
 
 # Tạo Named Value cho JWT_SECRET trong APIM (base64 encoded cho validate-jwt key)
 echo "    --> Tạo Named Value: JWT_SECRET..."
@@ -325,6 +361,7 @@ AUTH_POLICY=$(cat <<'POLICY_EOF'
       </when>
       <when condition="@(context.Request.Url.Path.Contains(&quot;/login&quot;))">
         <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <rewrite-uri template="/api/auth/{path}" />
       </when>
       <otherwise>
         <validate-jwt header-name="Authorization" failed-validation-httpcode="401" output-token-variable-name="jwt">
@@ -348,6 +385,7 @@ AUTH_POLICY=$(cat <<'POLICY_EOF'
           <value>{{jwt claim='role'}}</value>
         </set-header>
         <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <rewrite-uri template="/api/{path}" />
       </otherwise>
     </choose>
   </inbound>
@@ -401,6 +439,7 @@ PRODUCTS_POLICY=$(cat <<'POLICY_EOF'
       </when>
       <otherwise>
         <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <rewrite-uri template="/api/{path}" />
       </otherwise>
     </choose>
   </inbound>
