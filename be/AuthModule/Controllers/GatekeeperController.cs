@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using AuthModule.Attributes;
+using AuthModule.Dal.Entities;
 using AuthModule.Dal.Repositories;
 using AuthModule.DTOs.Responses;
 using Microsoft.AspNetCore.Authorization;
@@ -11,6 +12,10 @@ namespace AuthModule.Controllers;
 /// Gatekeeper endpoint used exclusively by the API Gateway to validate JWTs
 /// and check user permissions before the Gateway forwards requests to downstream
 /// services (e.g. MainModule).
+///
+/// Supports two token types:
+///   - JWT Bearer (internal app / user login) — validated via ValidateJwt + UserPermission
+///   - Raw JWT Bearer (external app)         — hashed + looked up in tokens table + TokenPermission
 /// </summary>
 [ApiController]
 [Route("api/gatekeeper")]
@@ -22,17 +27,23 @@ public class GatekeeperController : ControllerBase
 {
     private readonly IUserPermissionRepository _userPermRepo;
     private readonly IPermissionRepository _permissionRepo;
+    private readonly ITokenRepository _tokenRepo;
+    private readonly ITokenPermissionRepository _tokenPermRepo;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GatekeeperController> _logger;
 
     public GatekeeperController(
         IUserPermissionRepository userPermRepo,
         IPermissionRepository permissionRepo,
+        ITokenRepository tokenRepo,
+        ITokenPermissionRepository tokenPermRepo,
         IConfiguration configuration,
         ILogger<GatekeeperController> logger)
     {
         _userPermRepo = userPermRepo;
         _permissionRepo = permissionRepo;
+        _tokenRepo = tokenRepo;
+        _tokenPermRepo = tokenPermRepo;
         _configuration = configuration;
         _logger = logger;
     }
@@ -50,13 +61,35 @@ public class GatekeeperController : ControllerBase
             return Ok(GatekeeperResponse.Deny("Missing or invalid Authorization header", 401));
         }
 
-        var token = authHeader["Bearer ".Length..].Trim();
-        if (string.IsNullOrEmpty(token))
+        var rawToken = authHeader["Bearer ".Length..].Trim();
+        if (string.IsNullOrEmpty(rawToken))
         {
             _logger.LogWarning("Gatekeeper: empty token");
             return Ok(GatekeeperResponse.Deny("Token is empty", 401));
         }
 
+        // Always look up in DB first: if found, it's an external token (raw JWT stored in tokens table).
+        // If not found, validate as a standard internal JWT.
+        var token = await _tokenRepo.GetByTokenAsync(rawToken, ct);
+        if (token != null)
+        {
+            return await AuthorizeByExternalTokenAsync(token, request, ct);
+        }
+        else
+        {
+            return await AuthorizeByJwtAsync(rawToken, request, ct);
+        }
+    }
+
+    /// <summary>
+    /// Authorizes an internal request using a standard JWT.
+    /// Flow: validate JWT → extract claims (userId, accountId, role) → check UserPermission.
+    /// </summary>
+    private async Task<ActionResult<GatekeeperResponse>> AuthorizeByJwtAsync(
+        string token,
+        GatekeeperRequest request,
+        CancellationToken ct)
+    {
         Guid userId;
         Guid accountId;
         string email;
@@ -71,13 +104,10 @@ public class GatekeeperController : ControllerBase
                 return Ok(GatekeeperResponse.Deny("Invalid or expired token", 401));
             }
 
-            var userIdClaim = principal.FindFirst("userId")?.Value
-                ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var userIdClaim = principal.FindFirst("userId")?.Value ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var accountIdClaim = principal.FindFirst("accountId")?.Value;
-            var emailClaim = principal.FindFirst("email")?.Value
-                ?? principal.FindFirst(ClaimTypes.Email)?.Value;
-            var roleClaim = principal.FindFirst(ClaimTypes.Role)?.Value
-                ?? principal.FindFirst("role")?.Value;
+            var emailClaim = principal.FindFirst("email")?.Value ?? principal.FindFirst(ClaimTypes.Email)?.Value;
+            var roleClaim = principal.FindFirst(ClaimTypes.Role)?.Value ?? principal.FindFirst("role")?.Value;
 
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out userId))
             {
@@ -100,7 +130,7 @@ public class GatekeeperController : ControllerBase
             return Ok(GatekeeperResponse.Deny("Token validation error", 401));
         }
 
-        var result = await AuthorizeRequestAsync(accountId, role, request.Method, request.Path, ct);
+        var result = await AuthorizeByUserPermissionAsync(accountId, role, request.Method, request.Path, ct);
 
         if (result.Allowed)
             return Ok(GatekeeperResponse.Allow(userId, accountId, email, role));
@@ -108,48 +138,79 @@ public class GatekeeperController : ControllerBase
         return Ok(GatekeeperResponse.Deny(result.Reason ?? "Access denied", result.StatusCode));
     }
 
-    private async Task<AccessResult> AuthorizeRequestAsync(
+    /// <summary>
+    /// Authorizes an external app using a raw JWT stored in the tokens table.
+    /// Flow: Token was already looked up by the caller → check IsRevoked + ExpiresAt → check TokenPermission.
+    /// </summary>
+    private async Task<ActionResult<GatekeeperResponse>> AuthorizeByExternalTokenAsync(
+        Token token,
+        GatekeeperRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (token.IsRevoked)
+            {
+                _logger.LogWarning("Gatekeeper: external token {TokenId} is revoked", token.Id);
+                return Ok(GatekeeperResponse.Deny("Token has been revoked", 401));
+            }
+
+            if (token.ExpiresAt.HasValue && token.ExpiresAt < DateTime.UtcNow)
+            {
+                _logger.LogWarning("Gatekeeper: external token {TokenId} has expired", token.Id);
+                return Ok(GatekeeperResponse.Deny("Token has expired", 401));
+            }
+
+            // External tokens have no user/account identity — use CreatedBy for the response
+            var userId = token.CreatedBy;
+            var accountId = token.AccountId ?? token.CreatedBy;
+
+            var result = await AuthorizeByTokenPermissionAsync(token.Id, "ExternalToken", request.Method, request.Path, ct);
+
+            if (result.Allowed)
+                return Ok(GatekeeperResponse.Allow(userId, accountId, string.Empty, "ExternalToken"));
+
+            return Ok(GatekeeperResponse.Deny(result.Reason ?? "Access denied", result.StatusCode));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Gatekeeper: unexpected error during external token validation");
+            return Ok(GatekeeperResponse.Deny("Token validation error", 401));
+        }
+    }
+
+    /// <summary>
+    /// Checks authorization using UserPermission records (for JWT-based / internal auth).
+    /// </summary>
+    private async Task<AccessResult> AuthorizeByUserPermissionAsync(
         Guid accountId,
         string role,
         string method,
         string path,
         CancellationToken ct)
     {
-        var normalizedPath = path.StartsWith('/') ? path : "/" + path;
+        var normalizedPath = NormalizePath(path);
 
         if (role.Equals("Admin", StringComparison.OrdinalIgnoreCase))
             return AccessResult.Allow();
 
-        var allPermissions = await _permissionRepo.GetAllActiveForGatekeeperAsync(method, ct);
-        var permission = allPermissions
-            .Where(p => RoutePatternMatches(p.Endpoint!, normalizedPath))
-            .FirstOrDefault();
-
+        var permission = await FindMatchingPermissionAsync(method, normalizedPath, ct);
         if (permission == null)
-        {
-            _logger.LogWarning(
-                "Gatekeeper: no permission record found for {Method} {Path}",
-                method, normalizedPath);
             return AccessResult.Deny($"No permission record for {method} {path}");
-        }
 
         if (permission.IsPublic)
             return AccessResult.Allow();
 
         var now = DateTime.UtcNow;
 
-        var hasExactPermission = await _userPermRepo.AnyAsync(accountId, permission.Id, now, ct);
-
-        if (hasExactPermission)
+        if (await _userPermRepo.AnyAsync(accountId, permission.Id, now, ct))
             return AccessResult.Allow();
 
         var resource = ExtractResource(normalizedPath);
-        if (resource is not null)
+        if (resource != null)
         {
             var adminCode = $"{resource}:admin";
-            var hasAdminPermission = await _userPermRepo.AnyByResourceCodeAsync(accountId, adminCode, now, ct);
-
-            if (hasAdminPermission)
+            if (await _userPermRepo.AnyByResourceCodeAsync(accountId, adminCode, now, ct))
             {
                 _logger.LogDebug(
                     "Gatekeeper: account {AccountId} allowed (admin {AdminCode}) for {Method} {Path}",
@@ -163,6 +224,77 @@ public class GatekeeperController : ControllerBase
             accountId, method, normalizedPath);
         return AccessResult.Deny($"Access denied: no permission for {method} {path}");
     }
+
+    /// <summary>
+    /// Checks authorization using TokenPermission records (for external-app tokens).
+    /// Permissions come exclusively from TokenPermission — no fallback to UserPermission.
+    /// Uses PermissionCode as the primary matching key (e.g. "product:list").
+    /// Falls back to Endpoint+Method matching if no PermissionCode-based match is found.
+    /// </summary>
+    private async Task<AccessResult> AuthorizeByTokenPermissionAsync(
+        Guid tokenId,
+        string role,
+        string method,
+        string path,
+        CancellationToken ct)
+    {
+        var normalizedPath = NormalizePath(path);
+
+        if (role.Equals("Admin", StringComparison.OrdinalIgnoreCase))
+            return AccessResult.Allow();
+
+        // 1. Try PermissionCode-based matching (most flexible — assign by "product:list" code)
+        var resource = ExtractResource(normalizedPath);
+        var action = DeriveAction(method, normalizedPath);
+        if (resource != null && action != null)
+        {
+            var permissionCode = $"{resource}:{action}";
+            var allPermissions = await _permissionRepo.GetAllActiveForGatekeeperAsync(null, ct);
+            var byCode = allPermissions.FirstOrDefault(p =>
+                string.Equals(p.PermissionCode, permissionCode, StringComparison.OrdinalIgnoreCase));
+
+            if (byCode != null)
+            {
+                if (byCode.IsPublic)
+                    return AccessResult.Allow();
+
+                if (await _tokenPermRepo.HasPermissionAsync(tokenId, byCode.Id, ct))
+                {
+                    _logger.LogDebug(
+                        "Gatekeeper: external token {TokenId} allowed via PermissionCode {Code} for {Method} {Path}",
+                        tokenId, permissionCode, method, normalizedPath);
+                    return AccessResult.Allow();
+                }
+            }
+        }
+
+        // 2. Fall back to Endpoint+Method matching
+        var permission = await FindMatchingPermissionAsync(method, normalizedPath, ct);
+        if (permission == null)
+            return AccessResult.Deny($"No permission record for {method} {path}");
+
+        if (permission.IsPublic)
+            return AccessResult.Allow();
+
+        if (await _tokenPermRepo.HasPermissionAsync(tokenId, permission.Id, ct))
+        {
+            _logger.LogDebug(
+                "Gatekeeper: external token {TokenId} allowed via Endpoint match for {Method} {Path}",
+                tokenId, method, normalizedPath);
+            return AccessResult.Allow();
+        }
+
+        return AccessResult.Deny($"Token does not have permission for {method} {path}");
+    }
+
+    private async Task<Permission?> FindMatchingPermissionAsync(string method, string normalizedPath, CancellationToken ct)
+    {
+        var allPermissions = await _permissionRepo.GetAllActiveForGatekeeperAsync(method, ct);
+        return allPermissions.FirstOrDefault(p => RoutePatternMatches(p.Endpoint!, normalizedPath));
+    }
+
+    private static string NormalizePath(string path)
+        => path.StartsWith('/') ? path : "/" + path;
 
     private ClaimsPrincipal ValidateJwt(string token, out Exception? validationException)
     {
@@ -234,6 +366,36 @@ public class GatekeeperController : ControllerBase
         }
 
         return null;
+    }
+
+    private static string? DeriveAction(string method, string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var hasParams = segments.Any(s => s.StartsWith('{'));
+
+        var action = method.ToUpperInvariant() switch
+        {
+            "GET"    => hasParams ? "read" : "list",
+            "POST"   => "create",
+            "PUT"    => "update",
+            "PATCH"  => "patch",
+            "DELETE" => "delete",
+            _        => null
+        };
+
+        if (action == null) return null;
+
+        // Check for trailing non-param segments (e.g. "stock" in /api/products/{id}/stock)
+        var resourceIdx = Array.FindIndex(segments, s => !s.StartsWith('{'));
+        var trailingSlugs = segments
+            .Skip(resourceIdx + 1)
+            .Where(s => !s.StartsWith('{'))
+            .Select(s => s.ToLowerInvariant().Replace("-", "_"))
+            .ToList();
+
+        return trailingSlugs.Count > 0
+            ? $"{action}_{string.Join("_", trailingSlugs)}"
+            : action;
     }
 }
 

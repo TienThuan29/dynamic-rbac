@@ -13,9 +13,10 @@
 3. [System / Internal endpoint](#3-system--internal-endpoint)
 4. [Override class-level cho 1 action](#4-override-class-level-cho-1-action)
 5. [Kết hợp với AutoGenerateCode](#5-kết-hợp-với-autogeneratecode)
-6. [Wildcard `:admin` — toàn quyền trên resource](#7-wildcard-admin--toàn-quyền-trên-resource)
-7. [Anti-patterns — những gì KHÔNG nên làm](#8-anti-patterns--những-gì-không-nên-làm)
-8. [Cheat sheet](#9-cheat-sheet)
+6. [External Token — Long-Lived Token cho External Apps](#6-external-token--long-lived-token-cho-external-apps)
+7. [Wildcard `:admin` — toàn quyền trên resource](#7-wildcard-admin--toàn-quyền-trên-resource)
+8. [Anti-patterns — những gì KHÔNG nên làm](#8-anti-patterns--những-gì-không-nên-làm)
+9. [Cheat sheet](#9-cheat-sheet)
 
 ---
 
@@ -180,7 +181,116 @@ public class AdminController : ControllerBase
 
 ---
 
-## 7. Wildcard `:admin` — toàn quyền trên resource
+## 6. External Token — Long-Lived Token cho External Apps
+
+### 6.1. Khi nào dùng
+
+Khi một **external application** (ứng dụng bên thứ ba, script, CI/CD, service-to-service)
+cần truy cập API mà không cần user identity. Thay vì dùng JWT của user thật,
+tạo một token riêng và gán quyền trực tiếp vào token đó.
+
+### 6.2. So sánh
+
+| | Internal JWT (User login) | External Token |
+|--|--|--|
+| Ai tạo | `AuthController.Login()` | Admin qua Dashboard UI |
+| Quyền comes from | `UserPermission` (theo account) | `TokenPermission` (theo token) |
+| Identity | Có (userId, accountId, email) | Không (`role = "ExternalToken"`) |
+| Expiry | JWT expiry (thường ngắn) | Có thể không expires hoặc long-lived |
+
+### 6.3. Cách tạo token trên UI Dashboard
+
+1. Mở **Dashboard** → **Token** tab
+2. Click **Create Token**
+3. Chọn **"No account"** (để external token không gắn user/account)
+4. Chọn các permissions cần thiết (ví dụ: `products:list`, `products:read`)
+5. Đặt **Expires in minutes** (hoặc bỏ trống để không hết hạn)
+6. Copy raw JWT được trả về (chỉ hiển thị **1 lần duy nhất**)
+
+### 6.4. Cách sử dụng
+
+External token dùng **đúng cách** giống như JWT thông thường:
+
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+Gateway sẽ tự nhận biết đây là external token (vì token tồn tại trong `tokens` table)
+và kiểm tra quyền qua `TokenPermission`.
+
+### 6.5. Cách gán quyền
+
+Admin gán quyền bằng **permission ID** (UUID) — tức là gán permission có
+`permission_code = "products:list"`:
+
+```
+Token được gán quyền:
+  - "products:list"  (GET /api/products)
+  - "products:read"  (GET /api/products/{id})
+
+Token KHÔNG được gán quyền:
+  - "products:create"
+  - "products:update"
+  → Gọi POST /api/products → DENY 403
+```
+
+### 6.6. Tạo token qua API
+
+```bash
+# Login as admin first
+curl -X POST http://localhost:5001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@example.com", "entraIdObjectId": "..."}'
+
+# Response: { "accessToken": "eyJ..." }
+
+# Tạo external token
+curl -X POST http://localhost:5001/api/tokens \
+  -H "Authorization: Bearer <admin_accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accountId": null,
+    "permissionIds": [
+      "REPLACE_WITH_permissionId_FOR_products_list",
+      "REPLACE_WITH_permissionId_FOR_products_read"
+    ],
+    "expiresInMinutes": 43200
+  }'
+
+# Response: { "id": "...", "rawJwt": "eyJ...", "permissions": [...] }
+```
+
+> **Lưu ý**: `permissionIds` nhận **UUID của permission**, không phải `permission_code`.
+> Tra cứu permission ID qua API `/api/permissions` hoặc UI Dashboard.
+
+### 6.7. Refresh token (rotate raw JWT)
+
+Token có thể được rotate mà **giữ nguyên permissions**:
+
+```bash
+curl -X POST http://localhost:5001/api/tokens/<tokenId>/refresh?extendMinutes=43200 \
+  -H "Authorization: Bearer <admin_accessToken>"
+
+# Response: { "id": "...", "rawJwt": "eyJ...MỚI...", "permissions": [...] }
+```
+
+### 6.8. Revoke token (vô hiệu hoá ngay lập tức)
+
+```bash
+curl -X POST http://localhost:5001/api/tokens/<tokenId>/revoke \
+  -H "Authorization: Bearer <admin_accessToken>"
+```
+
+### 6.9. Thêm/bớt quyền cho token đã tạo
+
+1. Mở **Dashboard** → **Token** tab
+2. Click **Permissions** trên token cần chỉnh
+3. Thêm hoặc bỏ permission
+4. Click **Save**
+
+---
+
+## 8. Wildcard `:admin` — toàn quyền trên resource
 
 ### 7.1. Khi nào dùng
 
@@ -235,7 +345,7 @@ User có products:admin?
 
 ---
 
-## 8. Anti-patterns — những gì KHÔNG nên làm
+## 9. Anti-patterns — những gì KHÔNG nên làm
 
 ### 8.1. Đặt `Code` trùng nhau ở 2 endpoint khác nhau
 
@@ -295,7 +405,7 @@ public IActionResult Data() { ... }
 
 ---
 
-## 9. Cheat Sheet
+## 10. Cheat Sheet
 
 | Tình huống | Snippet |
 |------------|---------|
@@ -307,11 +417,13 @@ public IActionResult Data() { ... }
 | Force private (override `[AllowAnonymous]`) | `[PermissionMeta(Public=PublicMode.Private)]` |
 | Class-level mặc định + method override | Class: `[PermissionMeta(...)]`, Method: `[PermissionMeta(...)]` |
 | **`:admin` wildcard** | Auto-sync, chỉ gán `[resource]:admin` cho user là đủ |
+| **External token (external app)** | Tạo token qua Dashboard, gán `TokenPermission` |
 
 ---
 
-## Tham khảo
+## Tham Khảo
 
-- [DYNAMIC_PERMISSION_DESIGN.MD](DYNAMIC_PERMISSION_DESIGN.MD) — thiết kế tổng thể
+- [DYNAMIC_PERMISSION_DESIGN.MD](DYNAMIC_PERMISSION_DESIGN.MD) — thiết kế tổng thể + external token
+- [GATEWAY_ARCHITECTURE.MD](GATEWAY_ARCHITECTURE.MD) — kiến trúc gateway + luồng auth
 - `be/AuthModule/Attributes/PermissionMetaAttribute.cs` — định nghĩa attribute
 - `be/AuthModule/Extensions/PermissionSyncExtensions.cs` — logic resolve metadata

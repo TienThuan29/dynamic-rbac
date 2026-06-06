@@ -2,6 +2,10 @@
 
 > Tài liệu mô tả kiến trúc và luồng xử lý request từ client đến backend services
 > trong hệ thống Modular Monolith (`LocalGateway` + `AuthModule` + `MainModule`).
+>
+> Hỗ trợ **2 loại token**:
+> - **Internal JWT**: JWT thông thường (user login) — validate JWT → check `UserPermission`
+> - **External Token**: Raw JWT lưu trong `tokens` table — lookup DB → check `TokenPermission`
 
 ---
 
@@ -100,17 +104,25 @@ Content-Type: application/json
 
 ### Bước 3 — AuthModule xử lý (GatekeeperController)
 
-`GatekeeperController` thực hiện 4 bước:
+`GatekeeperController` thực hiện 5 bước:
 
 ```
 Bước 3.1: Extract Bearer token
          ↓
-Bước 3.2: Validate JWT (signature, expiry, issuer, audience)
+Bước 3.2: Lookup token trong tokens table (DB-first dispatch)
          ↓
-Bước 3.3: Tra cứu permission record (Endpoint + Method) trong DB
+Bước 3.3a: Tìm thấy (external token)
+         │   Check IsRevoked + ExpiresAt
+         │   → Check TokenPermission (PermissionCode hoặc Endpoint+Method)
          ↓
-Bước 3.4: Kiểm tra UserPermissions (exact match hoặc :admin)
+Bước 3.3b: Không tìm thấy (internal JWT)
+         │   Validate JWT (signature, expiry, issuer, audience)
+         │   → Check UserPermission (Endpoint+Method hoặc :admin)
 ```
+
+> **Dispatch logic quan trọng**: Luôn lookup DB trước — tìm thấy là external token,
+> không tìm thấy mới validate JWT. Cả hai đều là raw JWT (có 3 phần `.xxx.xxx.xxx`),
+> nên **KHÔNG** phân biệt bằng JWT structure.
 
 #### Bước 3.1 — Extract Bearer token
 
@@ -122,9 +134,36 @@ if (!authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
 var token = authHeader["Bearer ".Length..].Trim();
 ```
 
-#### Bước 3.2 — Validate JWT
+#### Bước 3.2 — DB-first dispatch
 
-Dùng `JwtSecurityTokenHandler` với tham số đọc từ `IConfiguration` / environment variables:
+```csharp
+var token = await _tokenRepo.GetByTokenAsync(rawToken, ct);
+if (token != null)
+    return await AuthorizeByExternalTokenAsync(token, request, ct);
+else
+    return await AuthorizeByJwtAsync(rawToken, request, ct);
+```
+
+#### Bước 3.3a — External Token Authorization (TokenPermission)
+
+Khi token tìm thấy trong `tokens` table:
+
+```
+1. Check token.IsRevoked  → true → DENY 401 "Token has been revoked"
+2. Check token.ExpiresAt → expired → DENY 401 "Token has expired"
+3. Lookup TokenPermission
+   ├── Check PermissionCode match (e.g. "products:list")
+   │   → found + has permission → ALLOW
+   └── Fallback: Endpoint+Method match
+       → found + has permission → ALLOW
+4. Không match → DENY 403 "Token does not have permission for METHOD PATH"
+```
+
+External token **KHÔNG fallback** sang `UserPermission` — chỉ check qua `TokenPermission`.
+
+#### Bước 3.3b — Internal JWT Authorization (UserPermission)
+
+Khi token không tìm thấy trong DB → validate như JWT thông thường:
 
 ```csharp
 var principal = handler.ValidateToken(token, new TokenValidationParameters
@@ -138,9 +177,12 @@ var principal = handler.ValidateToken(token, new TokenValidationParameters
     ValidateLifetime = true,
     ClockSkew = TimeSpan.Zero
 }, out _);
+
+// Extract claims: userId, accountId, email, role
+// Check UserPermission: exact match + :admin wildcard
 ```
 
-#### Bước 3.3 — Tra cứu permission record (route pattern matching)
+#### Bước 3.4 — Tra cứu permission record (route pattern matching)
 
 Permission `Endpoint` thường lưu route template kiểu ASP.NET — ví dụ `/api/products/{id}`.
 Vì vậy không thể `ILike` đơn thuần (không khớp được path thực tế `/api/products/743b...`).
@@ -180,7 +222,7 @@ private static bool RoutePatternMatches(string pattern, string path)
 > Tập `methodCandidates` thường chỉ vài chục bản ghi nên việc match in-memory không tạo gánh nặng.
 > Nếu danh mục permission tăng lớn, có thể tối ưu bằng prefix index hoặc cache phía AuthModule.
 
-#### Bước 3.4 — Kiểm tra user permissions
+#### Bước 3.5 — Kiểm tra user permissions (internal JWT only)
 
 Hai chế độ kiểm tra:
 
@@ -350,6 +392,10 @@ CORS nên được config tại `LocalGateway` (điểm vào duy nhất), không
 |-------------|--------|---------|
 | Missing Authorization header | 401 | "Missing or invalid Authorization header" |
 | Invalid token format | 401 | "Token is empty" |
+| External token not found in DB | 401 | "Invalid token" |
+| External token revoked | 401 | "Token has been revoked" |
+| External token expired | 401 | "Token has expired" |
+| External token: no TokenPermission | 403 | "Token does not have permission for METHOD PATH" |
 | JWT signature/exp/iss/aud fail | 401 | "Invalid or expired token" |
 | No permission record found | 403 | "No permission record for METHOD PATH" |
 | No exact permission + no :admin | 403 | "Access denied: no permission for METHOD PATH" |

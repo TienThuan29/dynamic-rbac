@@ -18,9 +18,9 @@ public class Token
     public Guid? AccountId { get; set; }
 
     [Required]
-    [MaxLength(255)]
-    [Column("token_hash")]
-    public string TokenHash { get; set; } = string.Empty;
+    [MaxLength(4000)]
+    [Column("token")]
+    public string AccessToken { get; set; } = string.Empty;
 
     [MaxLength(50)]
     [Column("token_type")]

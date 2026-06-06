@@ -9,7 +9,7 @@ public interface ITokenRepository : IRepository
     Task<Token?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<Token?> GetByIdForDeleteAsync(Guid id, CancellationToken ct = default);
     Task<Token?> GetByIdForUpdateAsync(Guid id, CancellationToken ct = default);
-    Task<Token?> GetByHashAsync(string tokenHash, CancellationToken ct = default);
+    Task<Token?> GetByTokenAsync(string token, CancellationToken ct = default);
     Task<List<Token>> GetActiveByAccountIdAsync(Guid accountId, CancellationToken ct = default);
     Task<(List<Token> Items, int TotalCount)> GetAllAsync(
         Guid? currentAccountId, bool isAdmin,
@@ -56,12 +56,12 @@ public class TokenRepository : ITokenRepository
             .FirstOrDefaultAsync(t => t.Id == id, ct);
     }
 
-    public async Task<Token?> GetByHashAsync(string tokenHash, CancellationToken ct = default)
+    public async Task<Token?> GetByTokenAsync(string token, CancellationToken ct = default)
     {
         return await _db.Tokens
             .AsNoTracking()
             .Include(t => t.TokenPermissions)
-            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
+            .FirstOrDefaultAsync(t => t.AccessToken == token, ct);
     }
 
     public async Task<List<Token>> GetActiveByAccountIdAsync(Guid accountId, CancellationToken ct = default)

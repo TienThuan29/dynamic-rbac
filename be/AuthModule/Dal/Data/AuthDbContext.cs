@@ -78,9 +78,9 @@ public class AuthDbContext : DbContext
             .HasForeignKey(tp => tp.PermissionId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Token: unique index on token_hash
+        // Token: unique index on token
         modelBuilder.Entity<Token>()
-            .HasIndex(t => t.TokenHash).IsUnique();
+            .HasIndex(t => t.AccessToken).IsUnique();
 
         // Token: index on created_by for non-admin filtering
         modelBuilder.Entity<Token>()

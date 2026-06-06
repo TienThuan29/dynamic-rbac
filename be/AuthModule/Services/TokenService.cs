@@ -4,6 +4,7 @@ using AuthModule.DTOs.Common;
 using AuthModule.DTOs.Requests;
 using AuthModule.DTOs.Responses;
 using AuthModule.Mappers;
+using Microsoft.EntityFrameworkCore;
 
 namespace AuthModule.Services;
 
@@ -97,20 +98,13 @@ public class TokenAppService : ITokenAppService
             ? now.AddMinutes(input.ExpiresInMinutes.Value)
             : (DateTime?)null;
 
-        var rawJwt = account != null
-            ? _jwtUtil.GenerateJwtToken(
-                account.User?.Id ?? account.Id,
-                account.Id,
-                account.Email,
-                account.Role)
-            : _jwtUtil.GenerateJwtToken(currentAccountId, currentAccountId, null, "Token");
-        var tokenHash = ComputeJwtHash(rawJwt);
+        var rawJwt = _jwtUtil.GenerateJwtToken(Guid.Empty, Guid.Empty, null, "ExternalToken");
 
         var token = new Token
         {
             CreatedBy = currentAccountId,
             AccountId = input.AccountId,
-            TokenHash = tokenHash,
+            AccessToken = rawJwt,
             TokenType = "Bearer",
             ExpiresAt = expiresAt,
             IsRevoked = false
@@ -177,7 +171,7 @@ public class TokenAppService : ITokenAppService
                 account.Email,
                 account.Role)
             : _jwtUtil.GenerateJwtToken(token.CreatedBy, token.CreatedBy, null, "Token");
-        token.TokenHash = ComputeJwtHash(rawJwt);
+        token.AccessToken = rawJwt;
 
         if (extendMinutes.HasValue)
             token.ExpiresAt = DateTime.UtcNow.AddMinutes(extendMinutes.Value);
@@ -223,7 +217,14 @@ public class TokenAppService : ITokenAppService
 
         await _tokenPermRepo.RemoveByTokenIdAsync(id, ct);
         await _tokenRepo.RemoveAsync(token, ct);
-        await _tokenRepo.SaveChangesAsync(ct);
+        try
+        {
+            await _tokenRepo.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new KeyNotFoundException($"Token {id} was already deleted or does not exist.");
+        }
 
         _logger.LogInformation("Token {TokenId} deleted", id);
     }
@@ -277,11 +278,5 @@ public class TokenAppService : ITokenAppService
         await _tokenPermRepo.SaveChangesAsync(ct);
 
         _logger.LogInformation("Removed permission {PermissionId} from token {TokenId}", permissionId, id);
-    }
-
-    private static string ComputeJwtHash(string rawJwt)
-    {
-        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(rawJwt))).ToLowerInvariant();
     }
 }

@@ -51,14 +51,17 @@ public class JwtUtil : IJwtUtil
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(_jwtSecret);
 
-            var claims = new[]
+            var claims = new List<Claim>
             {
             new Claim("userId", userId.ToString()),
             new Claim("accountId", accountId.ToString()),
-            new Claim("email", email),
             new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
             new Claim(ClaimTypes.Role, role)
         };
+            if (!string.IsNullOrEmpty(email))
+            {
+                claims.Add(new Claim("email", email));
+            }
 
             var tokenDescriptor = new SecurityTokenDescriptor
             {

@@ -1,0 +1,601 @@
+{
+  "info": {
+    "name": "API Gateway Demo - External App Token Flow",
+    "description": "Demo collection showing the full flow: (1) Admin creates an external token, (2) External app uses it to access MainModule resources via the Gateway.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gateway_url",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "auth_url",
+      "value": "http://localhost:5001",
+      "type": "string"
+    },
+    {
+      "key": "main_url",
+      "value": "http://localhost:5002",
+      "type": "string"
+    },
+    {
+      "key": "admin_jwt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "external_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{admin_jwt}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "0 - Setup",
+      "item": [
+        {
+          "name": "Login as Admin (get JWT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.collectionVariables.set('admin_jwt', jsonData.accessToken);",
+                  "",
+                  "pm.test('Login successful', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Has accessToken', function () {",
+                  "    pm.expect(jsonData.accessToken).to.be.a('string').that.is.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Role is Admin', function () {",
+                  "    pm.expect(jsonData.role).to.eql('Admin');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"admin@example.com\",\n    \"entraIdObjectId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{auth_url}}/api/auth/login",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 - Permissions",
+      "item": [
+        {
+          "name": "List all permissions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Has items', function () {",
+                  "    pm.expect(jsonData.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Products permissions exist', function () {",
+                  "    var products = jsonData.items.filter(function(p) {",
+                  "        return p.permissionCode && p.permissionCode.startsWith('products');",
+                  "    });",
+                  "    pm.expect(products.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{auth_url}}/api/permissions?page=1&pageSize=50",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "permissions"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "pageSize", "value": "50"}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 - Create External Token",
+      "item": [
+        {
+          "name": "Create token for ExternalApp (list + read products only, 7 days)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Status 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Token ID returned', function () {",
+                  "    pm.expect(jsonData.id).to.be.a('string');",
+                  "});",
+                  "",
+                  "pm.test('Has RawJwt (use this as Bearer token)', function () {",
+                  "    pm.expect(jsonData.rawJwt).to.be.a('string').that.is.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Set external_token variable', function () {",
+                  "    pm.collectionVariables.set('external_token', jsonData.rawJwt);",
+                  "    console.log('External Token saved:', jsonData.rawJwt.substring(0, 50) + '...');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"accountId\": null,\n    \"permissionIds\": [],\n    \"expiresInMinutes\": 10080\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{auth_url}}/api/tokens",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "tokens"]
+            }
+          }
+        },
+        {
+          "name": "Create token WITH specific permissions (list + read + create products)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Status 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Has rawJwt', function () {",
+                  "    pm.expect(jsonData.rawJwt).to.be.a('string').that.is.not.empty;",
+                  "});",
+                  "console.log('Token with permissions created:', jsonData.rawJwt.substring(0, 50) + '...');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"accountId\": null,\n    \"permissionIds\": [\n        \"REPLACE_WITH_permissionId_FOR_products_list\",\n        \"REPLACE_WITH_permissionId_FOR_products_read\",\n        \"REPLACE_WITH_permissionId_FOR_products_create\"\n    ],\n    \"expiresInMinutes\": 43200\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{auth_url}}/api/tokens",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "tokens"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 - MainModule via Gateway (External Token)",
+      "item": [
+        {
+          "name": "GET /api/products (list) - using external token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Has items array', function () {",
+                  "    pm.expect(jsonData).to.have.property('items').that.is.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Response came from MainModule via Gateway', function () {",
+                  "    pm.expect(jsonData).to.have.property('page');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{external_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/products?page=1&pageSize=10",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "pageSize", "value": "10"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/products/{id} (read) - using external token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Has product fields', function () {",
+                  "    pm.expect(jsonData).to.have.property('name').or.have.property('productName');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{external_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/products/00000000-0000-0000-0000-000000000001",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products", "00000000-0000-0000-0000-000000000001"]
+            }
+          }
+        },
+        {
+          "name": "POST /api/products (create) - using external token (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403 Forbidden (no create permission)', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{external_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"name\": \"External App Product\",\n    \"price\": 999,\n    \"stock\": 50\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/products",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "products"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 - MainModule Direct (bypass Gateway)",
+      "item": [
+        {
+          "name": "GET /api/products - direct to MainModule (no auth)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{main_url}}/api/products",
+              "host": ["{{main_url}}"],
+              "path": ["api", "products"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 - Gatekeeper (validate external token)",
+      "item": [
+        {
+          "name": "Validate external token against products:list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Allowed = true', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.allowed).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test('Has userId and accountId', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.userId).to.be.a('string');",
+                  "    pm.expect(jsonData.accountId).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"authorizationHeader\": \"Bearer {{external_token}}\",\n    \"method\": \"GET\",\n    \"path\": \"/api/products\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{auth_url}}/api/gatekeeper",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "gatekeeper"]
+            }
+          }
+        },
+        {
+          "name": "Validate external token against products:create (expect denied)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Allowed = false (no create permission)', function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.allowed).to.eql(false);",
+                  "    pm.expect(jsonData.reason).to.include('permission');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"authorizationHeader\": \"Bearer {{external_token}}\",\n    \"method\": \"POST\",\n    \"path\": \"/api/products\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{auth_url}}/api/gatekeeper",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "gatekeeper"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 - Token Management",
+      "item": [
+        {
+          "name": "List all tokens",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Has items', function () {",
+                  "    pm.expect(jsonData.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{auth_url}}/api/tokens?page=1&pageSize=20",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "tokens"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "pageSize", "value": "20"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Add permissions to external token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Has permissions', function () {",
+                  "    pm.expect(jsonData.permissions).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n    \"REPLACE_WITH_permissionId_FOR_products_create\",\n    \"REPLACE_WITH_permissionId_FOR_products_update\"\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{auth_url}}/api/tokens/REPLACE_WITH_tokenId/permissions",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "tokens", "REPLACE_WITH_tokenId", "permissions"]
+            }
+          }
+        },
+        {
+          "name": "Refresh external token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('New rawJwt returned', function () {",
+                  "    pm.expect(jsonData.rawJwt).to.be.a('string').that.is.not.empty;",
+                  "});",
+                  "pm.test('Update external_token variable', function () {",
+                  "    pm.collectionVariables.set('external_token', jsonData.rawJwt);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{auth_url}}/api/tokens/REPLACE_WITH_tokenId/refresh?extendMinutes=43200",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "tokens", "REPLACE_WITH_tokenId", "refresh"],
+              "query": [
+                {"key": "extendMinutes", "value": "43200"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Revoke external token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', function () { pm.response.to.have.status(200); });",
+                  "",
+                  "pm.test('Token is now revoked - Gatekeeper should deny', function () {",
+                  "    pm.expect(pm.response.text()).to.include('revoked');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{auth_url}}/api/tokens/REPLACE_WITH_tokenId/revoke",
+              "host": ["{{auth_url}}"],
+              "path": ["api", "tokens", "REPLACE_WITH_tokenId", "revoke"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

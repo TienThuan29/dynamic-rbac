@@ -214,11 +214,11 @@ namespace AuthModule.Dal.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_revoked");
 
-                    b.Property<string>("TokenHash")
+                    b.Property<string>("AccessToken")
                         .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)")
-                        .HasColumnName("token_hash");
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("token");
 
                     b.Property<string>("TokenType")
                         .IsRequired()
@@ -234,7 +234,7 @@ namespace AuthModule.Dal.Migrations
                     b.HasIndex("CreatedBy")
                         .HasDatabaseName("IX_tokens_created_by");
 
-                    b.HasIndex("TokenHash")
+                    b.HasIndex("AccessToken")
                         .IsUnique();
 
                     b.ToTable("tokens");

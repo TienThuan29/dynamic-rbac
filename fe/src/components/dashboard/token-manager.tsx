@@ -169,7 +169,7 @@ function toPayload(form: TokenFormState): CreateTokenPayload {
   const expiresInMinutes = Number(form.expiresInMinutes || 0)
 
   return {
-    accountId: form.accountId,
+    accountId: form.accountId || null,
     permissionIds: form.permissionIds,
     expiresInMinutes: expiresInMinutes > 0 ? expiresInMinutes : null,
   }
@@ -333,7 +333,7 @@ export function TokenManager({ session }: TokenManagerProps) {
   }
 
   async function openCreateDialog() {
-    setForm({ ...emptyForm, accountId: session?.accountId ?? "" })
+    setForm(emptyForm)
     setPermissionFilters(defaultPermissionFilters)
     setIsCreateOpen(true)
     await loadCatalog()
@@ -393,10 +393,6 @@ export function TokenManager({ session }: TokenManagerProps) {
     event.preventDefault()
 
     const payload = toPayload(form)
-    if (!payload.accountId) {
-      toast.error("Account is required.")
-      return
-    }
 
     setSaving(true)
 
@@ -1034,6 +1030,7 @@ function CreateTokenDialog({
                       onFormChange({ ...form, accountId: event.target.value })
                     }
                   >
+                    <option value="">-- No account --</option>
                     {accounts.map((account) => (
                       <option key={account.accountId} value={account.accountId}>
                         {account.fullName || account.email} ({account.role})
@@ -1077,7 +1074,7 @@ function CreateTokenDialog({
             <Button variant="outline" type="button" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || !form.accountId}>
+            <Button type="submit" disabled={saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Create
             </Button>

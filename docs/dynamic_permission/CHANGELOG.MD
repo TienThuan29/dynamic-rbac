@@ -5,6 +5,90 @@
 
 ---
 
+## 2026-06-05 — External Token cho Ứng Dụng Bên Thứ Ba
+
+Commit: `feat: external token support`
+
+### Tính năng mới
+
+#### 1. External Token — Long-Lived Bearer Token
+
+Cho phép external applications (ứng dụng bên thứ ba, script, CI/CD, service-to-service)
+truy cập API qua long-lived token mà không cần user identity.
+
+- **2 bảng mới**: `tokens` + `token_permissions`
+- **Entity**: `Token.cs`, `TokenPermission.cs`
+- **Migration**: `20250605000000_AddTokens`
+- **Repository**: `TokenRepository.cs`, `TokenPermissionRepository.cs`
+- **Service**: `TokenService.cs` (create, refresh, revoke, add/remove permissions)
+- **Controller**: `TokenController.cs`
+
+#### 2. Gatekeeper — DB-First Dispatch
+
+- **Trước**: Dùng `IsJwtStructure()` (token có `.` và 3 phần) → sai vì cả 2 loại đều là JWT
+- **Sau**: Luôn lookup `tokens` table trước → tìm thấy là external, không tìm thấy mới validate JWT
+
+```csharp
+// TRƯỚC (sai)
+if (IsJwtStructure(rawToken))
+    return await AuthorizeByJwtAsync(...);  // external token luôn nhảy vào đây!
+
+// SAU (đúng)
+var token = await _tokenRepo.GetByTokenAsync(rawToken, ct);
+if (token != null)
+    return await AuthorizeByExternalTokenAsync(token, ...);
+return await AuthorizeByJwtAsync(rawToken, ...);
+```
+
+#### 3. Gatekeeper — Authorization bằng `TokenPermission` (không fallback)
+
+- External token **chỉ check qua `TokenPermission`** — không fallback sang `UserPermission`
+- JWT nội bộ (internal) vẫn check qua `UserPermission` như cũ
+
+#### 4. Gatekeeper — PermissionCode Matching cho External Token
+
+- Ưu tiên 1: Match bằng `PermissionCode` (e.g. `GET /api/products` → `"products:list"`)
+- Ưu tiên 2: Fallback bằng `Endpoint + Method`
+
+```csharp
+// Derive permission_code từ path + method
+var resource = ExtractResource(normalizedPath);   // "products"
+var action = DeriveAction(method, normalizedPath); // "list"
+var permissionCode = $"{resource}:{action}";     // "products:list"
+
+// Tìm Permission có PermissionCode khớp
+var byCode = allPermissions.FirstOrDefault(p =>
+    string.Equals(p.PermissionCode, permissionCode, StringComparison.OrdinalIgnoreCase));
+```
+
+#### 5. External Token JWT không chứa Identity
+
+- External token sinh với `userId = Guid.Empty`, `accountId = Guid.Empty`, `role = "ExternalToken"`
+- Gateway response trả về `role = "ExternalToken"` để downstream phân biệt
+
+### Các thay đổi code
+
+| File | Thay đổi |
+|------|-----------|
+| `GatekeeperController.cs` | DB-first dispatch, TokenPermission matching, bỏ fallback |
+| `TokenService.cs` | External token sinh với Guid.Empty identity |
+| `Token.cs` + `TokenPermission.cs` | Entity mới |
+| `TokenRepository.cs` + `TokenPermissionRepository.cs` | Repository mới |
+| `TokenMapper.cs` | Map Token → TokenResponse |
+| `TokenController.cs` | CRUD endpoints mới |
+| `TokenRequests.cs` + `TokenResponses.cs` | DTOs mới |
+
+### Các thay đổi document
+
+| File | Thay đổi |
+|------|-----------|
+| `DYNAMIC_PERMISSION_DESIGN.MD` | Thêm section 12: External Token |
+| `GATEWAY_ARCHITECTURE.MD` | Cập nhật dispatch logic, thêm external token flow |
+| `DEVELOPER_COOKBOOK.MD` | Thêm section 6: External Token recipes |
+| `CHANGELOG.MD` | Ghi nhận tính năng mới |
+
+---
+
 ## 2026-06-04 — Sprint cải tiến UI & sửa lỗi Gatekeeper
 
 Commit: `4d41b8d` — *feat: dynamic RBAC improvements*
