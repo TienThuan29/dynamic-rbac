@@ -75,6 +75,10 @@ ACR_PASSWORD=$(az acr credential show \
 ACR_USERNAME="$ACR_NAME"
 SUB_ID=$(az account show --query 'id' -o tsv)
 
+# Login vào ACR trước khi push
+echo "    --> Login vào ACR: ${ACR_NAME}"
+echo "$ACR_PASSWORD" | docker login "${ACR_NAME}.azurecr.io" -u "$ACR_USERNAME" --password-stdin
+
 # ── 3. Build và push Docker images ──────────────────────────────────────────
 
 echo ""
@@ -331,9 +335,12 @@ echo ""
 echo "[7/7] Cấu hình APIM policy (Giải quyết triệt để CORS)..."
 
 # AuthModule policy
-AUTH_POLICY=$(cat <<'POLICY_EOF'
+# NOTE: Dùng HEREDOC KHÔNG có nháy đơn để expand ${URL_API1} trong policy
+# C# expressions dùng @(...) không bị expand vì không có $ ở đầu.
+AUTH_POLICY=$(cat <<POLICY_EOF
 <policies>
   <inbound>
+    <base />
     <cors allow-credentials="false">
       <allowed-origins>
         <origin>*</origin>
@@ -353,38 +360,145 @@ AUTH_POLICY=$(cat <<'POLICY_EOF'
         <header>*</header>
       </expose-headers>
     </cors>
+    <set-variable name="requestPath" value="@((string)context.Request.MatchedParameters[&quot;path&quot;])" />
+    <set-variable name="requestQuery" value="@(((string)context.Request.Url.QueryString).TrimStart('?'))" />
     <choose>
       <when condition="@(context.Request.Method == &quot;OPTIONS&quot;)">
         <return-response>
           <set-status code="200" reason="OK" />
         </return-response>
       </when>
-      <when condition="@(context.Request.Url.Path.Contains(&quot;/login&quot;))">
+      <when condition="@(((string)context.Variables[&quot;requestPath&quot;]).Equals(&quot;login&quot;, System.StringComparison.OrdinalIgnoreCase))">
         <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
         <rewrite-uri template="/api/auth/{path}" />
       </when>
       <otherwise>
-        <validate-jwt header-name="Authorization" failed-validation-httpcode="401" output-token-variable-name="jwt">
-          <issuer-signing-keys>
-            <key>{{JWT_SECRET}}</key>
-          </issuer-signing-keys>
-          <audiences>
-            <audience>swovnai</audience>
-          </audiences>
-        </validate-jwt>
+        <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <send-request mode="new" response-variable-name="gatekeeperResponse" timeout="20" ignore-error="true">
+          <set-url>@("https://${URL_API1}/api/gatekeeper")</set-url>
+          <set-method>POST</set-method>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@{
+              var authHeader = context.Request.Headers.GetValueOrDefault("Authorization", "");
+              var path = (string)context.Variables["requestPath"];
+              var query = (string)context.Variables["requestQuery"];
+              return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                  authorizationHeader = authHeader,
+                  method = context.Request.Method,
+                  path = "/api/" + path,
+                  query = query
+              });
+          }</set-body>
+        </send-request>
+        <choose>
+          <when condition="@(context.Variables.ContainsKey(&quot;gatekeeperResponse&quot;) == false || context.Variables[&quot;gatekeeperResponse&quot;] == null)">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>{"error":"Authentication service unavailable"}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="gatekeeperStatusCode" value="@((int)((IResponse)context.Variables[&quot;gatekeeperResponse&quot;]).StatusCode)" />
+        <set-variable name="gatekeeperBody" value="@{
+            var response = (IResponse)context.Variables[&quot;gatekeeperResponse&quot;];
+            var body = response.Body.As&lt;string&gt;(preserveContent: true);
+            return body ?? string.Empty;
+        }" />
+        <choose>
+          <when condition="@(((int)context.Variables[&quot;gatekeeperStatusCode&quot;]) &gt;= 500)">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>{"error":"Authentication service unavailable"}</set-body>
+            </return-response>
+          </when>
+          <when condition="@(string.IsNullOrWhiteSpace((string)context.Variables[&quot;gatekeeperBody&quot;]))">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>{"error":"Empty response from authentication service"}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="gatekeeperJson" value="@{
+            var body = (string)context.Variables[&quot;gatekeeperBody&quot;];
+            try
+            {
+                return Newtonsoft.Json.Linq.JObject.Parse(body);
+            }
+            catch
+            {
+                return new Newtonsoft.Json.Linq.JObject(
+                    new Newtonsoft.Json.Linq.JProperty(&quot;allowed&quot;, false),
+                    new Newtonsoft.Json.Linq.JProperty(&quot;statusCode&quot;, 503),
+                    new Newtonsoft.Json.Linq.JProperty(&quot;reason&quot;, &quot;Invalid response from authentication service&quot;)
+                );
+            }
+        }" />
+        <choose>
+          <when condition="@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;allowed&quot;];
+              return token == null || !string.Equals(token.ToString(), &quot;true&quot;, System.StringComparison.OrdinalIgnoreCase);
+          }">
+            <return-response>
+              <set-status code="@{
+                  var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+                  var token = json[&quot;statusCode&quot;];
+                  int parsed;
+                  return token != null &amp;&amp; int.TryParse(token.ToString(), out parsed) ? parsed : 403;
+              }" reason="Forbidden" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@{
+                  var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+                  var reasonToken = json[&quot;reason&quot;];
+                  var reason = reasonToken == null ? &quot;Access denied&quot; : reasonToken.ToString();
+                  return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                      error = reason
+                  });
+              }</set-body>
+            </return-response>
+          </when>
+        </choose>
         <set-header name="X-APIM-UserId" exists-action="override">
-          <value>{{jwt claim='oid'}}</value>
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;userId&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
         </set-header>
         <set-header name="X-APIM-AccountId" exists-action="override">
-          <value>{{jwt claim='accountId'}}</value>
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;accountId&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
         </set-header>
         <set-header name="X-APIM-Email" exists-action="override">
-          <value>{{jwt claim='email'}}</value>
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;email&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
         </set-header>
         <set-header name="X-APIM-Role" exists-action="override">
-          <value>{{jwt claim='role'}}</value>
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;role&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
         </set-header>
-        <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
         <rewrite-uri template="/api/{path}" />
       </otherwise>
     </choose>
@@ -409,9 +523,11 @@ az rest --method put \
   --body "{\"properties\": {\"format\": \"xml\", \"value\": $AUTH_POLICY_ESCAPED}}"
 
 # MainModule policy
-PRODUCTS_POLICY=$(cat <<'POLICY_EOF'
+# NOTE: Dùng HEREDOC KHÔNG có nháy đơn để expand ${URL_API1} trong policy
+PRODUCTS_POLICY=$(cat <<POLICY_EOF
 <policies>
   <inbound>
+    <base />
     <cors allow-credentials="false">
       <allowed-origins>
         <origin>*</origin>
@@ -431,6 +547,8 @@ PRODUCTS_POLICY=$(cat <<'POLICY_EOF'
         <header>*</header>
       </expose-headers>
     </cors>
+    <set-variable name="requestPath" value="@((string)context.Request.MatchedParameters[&quot;path&quot;])" />
+    <set-variable name="requestQuery" value="@(((string)context.Request.Url.QueryString).TrimStart('?'))" />
     <choose>
       <when condition="@(context.Request.Method == &quot;OPTIONS&quot;)">
         <return-response>
@@ -439,6 +557,131 @@ PRODUCTS_POLICY=$(cat <<'POLICY_EOF'
       </when>
       <otherwise>
         <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <send-request mode="new" response-variable-name="gatekeeperResponse" timeout="20" ignore-error="true">
+          <set-url>@("https://${URL_API1}/api/gatekeeper")</set-url>
+          <set-method>POST</set-method>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@{
+              var authHeader = context.Request.Headers.GetValueOrDefault("Authorization", "");
+              var path = (string)context.Variables["requestPath"];
+              var query = (string)context.Variables["requestQuery"];
+              return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                  authorizationHeader = authHeader,
+                  method = context.Request.Method,
+                  path = "/api/" + path,
+                  query = query
+              });
+          }</set-body>
+        </send-request>
+        <choose>
+          <when condition="@(context.Variables.ContainsKey(&quot;gatekeeperResponse&quot;) == false || context.Variables[&quot;gatekeeperResponse&quot;] == null)">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>{"error":"Authentication service unavailable"}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="gatekeeperStatusCode" value="@((int)((IResponse)context.Variables[&quot;gatekeeperResponse&quot;]).StatusCode)" />
+        <set-variable name="gatekeeperBody" value="@{
+            var response = (IResponse)context.Variables[&quot;gatekeeperResponse&quot;];
+            var body = response.Body.As&lt;string&gt;(preserveContent: true);
+            return body ?? string.Empty;
+        }" />
+        <choose>
+          <when condition="@(((int)context.Variables[&quot;gatekeeperStatusCode&quot;]) &gt;= 500)">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>{"error":"Authentication service unavailable"}</set-body>
+            </return-response>
+          </when>
+          <when condition="@(string.IsNullOrWhiteSpace((string)context.Variables[&quot;gatekeeperBody&quot;]))">
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>{"error":"Empty response from authentication service"}</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="gatekeeperJson" value="@{
+            var body = (string)context.Variables[&quot;gatekeeperBody&quot;];
+            try
+            {
+                return Newtonsoft.Json.Linq.JObject.Parse(body);
+            }
+            catch
+            {
+                return new Newtonsoft.Json.Linq.JObject(
+                    new Newtonsoft.Json.Linq.JProperty(&quot;allowed&quot;, false),
+                    new Newtonsoft.Json.Linq.JProperty(&quot;statusCode&quot;, 503),
+                    new Newtonsoft.Json.Linq.JProperty(&quot;reason&quot;, &quot;Invalid response from authentication service&quot;)
+                );
+            }
+        }" />
+        <choose>
+          <when condition="@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;allowed&quot;];
+              return token == null || !string.Equals(token.ToString(), &quot;true&quot;, System.StringComparison.OrdinalIgnoreCase);
+          }">
+            <return-response>
+              <set-status code="@{
+                  var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+                  var token = json[&quot;statusCode&quot;];
+                  int parsed;
+                  return token != null &amp;&amp; int.TryParse(token.ToString(), out parsed) ? parsed : 403;
+              }" reason="Forbidden" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@{
+                  var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+                  var reasonToken = json[&quot;reason&quot;];
+                  var reason = reasonToken == null ? &quot;Access denied&quot; : reasonToken.ToString();
+                  return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                      error = reason
+                  });
+              }</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-header name="X-APIM-UserId" exists-action="override">
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;userId&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
+        </set-header>
+        <set-header name="X-APIM-AccountId" exists-action="override">
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;accountId&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
+        </set-header>
+        <set-header name="X-APIM-Email" exists-action="override">
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;email&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
+        </set-header>
+        <set-header name="X-APIM-Role" exists-action="override">
+          <value>@{
+              var json = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;gatekeeperJson&quot;];
+              var token = json[&quot;role&quot;];
+              return token == null ? string.Empty : token.ToString();
+          }</value>
+        </set-header>
         <rewrite-uri template="/api/{path}" />
       </otherwise>
     </choose>

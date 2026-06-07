@@ -134,7 +134,7 @@ namespace AuthModule.Dal.Migrations
                     id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_by = table.Column<Guid>(type: "uuid", nullable: false),
                     account_id = table.Column<Guid>(type: "uuid", nullable: true),
-                    token_hash = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
+                    token = table.Column<string>(type: "character varying(4000)", maxLength: 4000, nullable: false),
                     token_type = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
                     expires_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     is_revoked = table.Column<bool>(type: "boolean", nullable: false)
@@ -212,9 +212,9 @@ namespace AuthModule.Dal.Migrations
                 column: "created_by");
 
             migrationBuilder.CreateIndex(
-                name: "IX_tokens_token_hash",
+                name: "IX_tokens_token",
                 table: "tokens",
-                column: "token_hash",
+                column: "token",
                 unique: true);
 
             migrationBuilder.CreateIndex(

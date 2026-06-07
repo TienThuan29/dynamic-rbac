@@ -92,6 +92,7 @@ public class TokenRepository : ITokenRepository
             .Include(t => t.CreatedByAccount)
             .Include(t => t.TokenPermissions)
                 .ThenInclude(tp => tp.Permission)
+            .AsSplitQuery()
             .OrderByDescending(t => t.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
