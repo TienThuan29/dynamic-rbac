@@ -1,381 +1,399 @@
-# Deploy lên Azure
+# Azure Deployment Guide
 
-Hướng dẫn deploy toàn bộ hệ thống lên Azure App Service (hoặc Azure Container Instances).
+Hướng dẫn deploy toàn bộ hệ thống lên Azure bao gồm kiến trúc, cấu hình và API Management.
 
 ---
 
-## 1. Chuẩn bị Infrastructure
+## 1. Kiến Trúc Tổng Quan
 
-### 1.1. Tạo Azure Database for PostgreSQL
-
-```bash
-# Tạo PostgreSQL Flexible Server
-az postgres flexible-server create \
-  --resource-group <rg-name> \
-  --name <pg-server-name> \
-  --sku-name Standard_D2s_v3 \
-  --storage-size 32 \
-  --location southeastasia \
-  --admin-user <admin-username> \
-  --admin-password <admin-password> \
-  --public none \
-  --database-name postgres
-
-# Lấy connection string
-az postgres flexible-server show-connection-string \
-  --server-name <pg-server-name> \
-  --admin-user <admin-username> \
-  --admin-password <admin-password>
 ```
-
-### 1.2. Tạo Azure App Service Plan và Web Apps
-
-```bash
-# Tạo App Service Plan (Free tier F1 cho dev, B1 cho prod)
-az appservice plan create \
-  --resource-group <rg-name> \
-  --name <plan-name> \
-  --sku F1 \
-  --is-linux
-
-# Tạo Web App cho AuthModule
-az webapp create \
-  --resource-group <rg-name> \
-  --plan <plan-name> \
-  --name <authmodule-app-name> \
-  --deployment-container-image-name dynamicrbac.azurecr.io/dynamic-rbac/authmodule:latest
-
-# Tạo Web App cho MainModule
-az webapp create \
-  --resource-group <rg-name> \
-  --plan <plan-name> \
-  --name <mainmodule-app-name> \
-  --deployment-container-image-name dynamicrbac.azurecr.io/dynamic-rbac/mainmodule:latest
-
-# Tạo Web App cho Frontend (Static Web App)
-az staticwebapp create \
-  --resource-group <rg-name> \
-  --name <frontend-app-name> \
-  --sku free
-```
-
-### 1.3. Cấu hình Azure Container Registry
-
-```bash
-# Login to ACR
-az acr login --name dynamicrbac
-
-# Enable admin user (nếu cần)
-az acr update --name dynamicrbac --admin-enabled true
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              CLIENT                                      │
+│                         (React Frontend)                                │
+└─────────────────────────────┬───────────────────────────────────────────┘
+                              │
+                              │ HTTPS
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    AZURE API MANAGEMENT (APIM)                           │
+│                                                                          │
+│   ┌──────────────┐    ┌──────────────┐                                  │
+│   │  /auth-api/* │    │/products-api/*│                                  │
+│   │  (AuthModule)│    │ (MainModule) │                                  │
+│   └──────┬───────┘    └──────┬───────┘                                  │
+│          │                   │                                           │
+│          │ Policy:           │ Policy:                                   │
+│          │ - CORS            │ - CORS                                    │
+│          │ - Rate Limit      │ - Rate Limit                              │
+│          │ - Gatekeeper Call │ - Gatekeeper Call                         │
+│          │ - Rewrite URI     │ - Rewrite URI                            │
+│          └───────┬───────────┘                                           │
+└──────────────────┼───────────────────────────────────────────────────────┘
+                   │ Internal HTTPS
+                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│               AZURE CONTAINER APPS ENVIRONMENT                            │
+│                    (env-swo-core)                                        │
+│                                                                          │
+│   ┌─────────────────────────────────────────────────────────────────┐  │
+│   │                    Container Apps                                 │  │
+│   │                                                                  │  │
+│   │   ┌──────────────────┐     ┌──────────────────┐                  │  │
+│   │   │  api-service-1   │     │  api-service-2   │                  │  │
+│   │   │  (AuthModule)    │     │  (MainModule)    │                  │  │
+│   │   │  Port: 8080      │     │  Port: 8080      │                  │  │
+│   │   └──────────────────┘     └──────────────────┘                  │  │
+│   │                                                                  │  │
+│   │   Internal Ingress: Chỉ APIM được gọi, không public              │  │
+│   └─────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│   ┌─────────────────────────────────────────────────────────────────┐  │
+│   │                    AZURE DATABASE FOR POSTGRESQL                │  │
+│   │                    (pg-tienthuan-db.postgres.database.azure.com) │  │
+│   │                                                                  │  │
+│   │   Tables: accounts, users, permissions, user_permissions,        │  │
+│   │           tokens, token_permissions, permission_groups            │  │
+│   └─────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Build và Push Docker Images
+## 2. Luồng Request Chi Tiết
 
-```bash
-# Login to Azure
-az login
+### 2.1. AuthModule (Login)
 
-# Build và push tất cả images lên ACR
-chmod +x scripts/build-push.sh
-./scripts/build-push.sh dynamicrbac.azurecr.io v1.0.0
+```
+Client
+  │
+  │ POST /auth-api/login
+  │ Headers: Content-Type: application/json
+  │
+  ▼
+APIM (AuthModule Policy)
+  │
+  │ Match: requestPath == "login"
+  │ Action: Rewrite URI to /api/auth/login
+  │        (Skip Gatekeeper - public endpoint)
+  │
+  ▼
+AuthModule Container
+  │
+  │ POST /api/auth/login
+  │ Handler: AuthController.Login()
+  │
+  │ 1. Validate Entra ID token (entraIdObjectId)
+  │ 2. Create/Update Account
+  │ 3. Generate JWT with claims: userId, accountId, email, role
+  │
+  ▼
+Response: { accessToken: "eyJ...", account: {...} }
+```
 
-# Verify images đã push
-az acr repository list --name dynamicrbac --output table
+### 2.2. Protected Resource (Products)
+
+```
+Client
+  │
+  │ GET /products-api/products
+  │ Headers: Authorization: Bearer <jwt>
+  │
+  ▼
+APIM (MainModule Policy)
+  │
+  │ Action: Call Gatekeeper via send-request
+  │ URL: https://api-service-1/api/gatekeeper
+  │ Body: { authorizationHeader: "Bearer <jwt>",
+  │         method: "GET",
+  │         path: "/api/products" }
+  │
+  ▼
+AuthModule Container (Gatekeeper)
+  │
+  │ GatekeeperController.Check()
+  │
+  │ 1. Extract Bearer token
+  │ 2. DB Lookup: tokens table (external token?)
+  │ 3. If found: Check TokenPermission
+  │ 4. If not found: Validate JWT + Check UserPermission
+  │ 5. Return: { allowed: true/false, userId, accountId, ... }
+  │
+  ▼ (if allowed)
+APIM Policy
+  │
+  │ Check gatekeeperResponse.allowed
+  │ If true: Rewrite URI + Forward
+  │ If false: Return 401/403
+  │
+  ▼
+MainModule Container
+  │
+  │ GET /api/products
+  │ Headers: X-UserId, X-AccountId, X-Email, X-Role
+  │
+  │ ProductController.GetAll()
+  │
+  ▼
+Response: { products: [...] }
 ```
 
 ---
 
-## 3. Cấu hình App Settings cho từng Service
+## 3. Azure Resources
 
-### 3.1. AuthModule (Azure App Service)
+### 3.1. Resource Group
+- **Name**: `rg-nguyentienthuan-0001`
+- **Location**: `koreacentral`
 
-**Settings:**
-```
-Name: ConnectionStrings__DefaultConnection
-Value: Host=<pg-server>.postgres.database.azure.com;Port=5432;Database=postgres;Username=<admin-user>;Password=<admin-password>;SslMode=Require
+### 3.2. Container Apps Environment
+- **Name**: `env-swo-core`
+- **Type**: Container Apps Environment (Linux)
+- **Internal Ingress**: Enabled (services không expose ra internet)
 
-Name: JWT_SECRET
-Value: <your-32-char-secret>
+### 3.3. Container Apps
+| App Name | Image | Internal FQDN | Port |
+|----------|-------|--------------|------|
+| `api-service-1` | `dynamicrbac.azurecr.io/api-service-1` | `api-service-1.<unique>.koreacentral.azurecontainerapps.io` | 8080 |
+| `api-service-2` | `dynamicrbac.azurecr.io/api-service-2` | `api-service-2.<unique>.koreacentral.azurecontainerapps.io` | 8080 |
 
-Name: JWT_ISSUER
-Value: swovnai
+### 3.4. Azure Database for PostgreSQL
+- **Name**: `pg-tienthuan-db`
+- **Type**: Flexible Server
+- **Tier**: Standard_D2s_v3
+- **Location**: `koreacentral`
 
-Name: JWT_AUDIENCE
-Value: swovnai
+### 3.5. Azure Container Registry
+- **Name**: `dynamicrbac`
+- **Login Server**: `dynamicrbac.azurecr.io`
 
-Name: WEBSITES_PORT
-Value: 8080
-
-Name: DOCKER_REGISTRY_SERVER_URL
-Value: https://dynamicrbac.azurecr.io
-
-Name: DOCKER_REGISTRY_SERVER_USERNAME
-Value: dynamicrbac
-
-Name: DOCKER_REGISTRY_SERVER_PASSWORD
-Value: <acr-password>
-
-Name: DOCKER_CUSTOM_IMAGE_NAME
-Value: dynamicrbac.azurecr.io/dynamic-rbac/authmodule:latest
-```
-
-### 3.2. MainModule (Azure App Service)
-
-**Settings:**
-```
-Name: ConnectionStrings__DefaultConnection
-Value: Host=<pg-server>.postgres.database.azure.com;Port=5432;Database=postgres;Username=<admin-user>;Password=<admin-password>;SslMode=Require
-
-Name: WEBSITES_PORT
-Value: 8080
-
-Name: DOCKER_REGISTRY_SERVER_URL
-Value: https://dynamicrbac.azurecr.io
-
-Name: DOCKER_REGISTRY_SERVER_USERNAME
-Value: dynamicrbac
-
-Name: DOCKER_REGISTRY_SERVER_PASSWORD
-Value: <acr-password>
-
-Name: DOCKER_CUSTOM_IMAGE_NAME
-Value: dynamicrbac.azurecr.io/dynamic-rbac/mainmodule:latest
-```
-
-### 3.3. LocalGateway (Azure App Service)
-
-**Settings:**
-```
-Name: GATEWAY_MODE
-Value: Local
-
-Name: AUTH_MODULE_URL
-Value: https://<authmodule-app>.azurewebsites.net
-
-Name: MAIN_MODULE_URL
-Value: https://<mainmodule-app>.azurewebsites.net
-
-Name: WEBSITES_PORT
-Value: 8080
-
-Name: DOCKER_REGISTRY_SERVER_URL
-Value: https://dynamicrbac.azurecr.io
-
-Name: DOCKER_REGISTRY_SERVER_USERNAME
-Value: dynamicrbac
-
-Name: DOCKER_REGISTRY_SERVER_PASSWORD
-Value: <acr-password>
-
-Name: DOCKER_CUSTOM_IMAGE_NAME
-Value: dynamicrbac.azurecr.io/dynamic-rbac/localgateway:latest
-```
-
-### 3.4. Thiết lập qua Azure Portal
-
-1. Mở **Azure Portal** → **App Services** → Chọn app
-2. Vào **Settings** → **Environment variables**
-3. Thêm từng setting ở trên
-4. **Save** → **Restart**
+### 3.6. Azure API Management
+- **Name**: `apimthuanntdev`
+- **SKU**: Developer
+- **Location**: `koreacentral`
 
 ---
 
-## 4. Cấu hình Azure API Management (tuỳ chọn)
+## 4. Environment Variables
 
-### 4.1. Thêm Backend Services
+### 4.1. AuthModule (api-service-1)
 
-```
-AuthModule: https://<authmodule-app>.azurewebsites.net
-MainModule: https://<mainmodule-app>.azurewebsites.net
-LocalGateway: https://<localgateway-app>.azurewebsites.net
-```
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `ConnectionStrings__DefaultConnection` | `Host=...;Port=5432;Database=postgres;...` | PostgreSQL connection string |
+| `JWT_SECRET` | `xRsbQCknWZriINldt02Gjp3UaOOByM9Eoqanqz9fMT1` | JWT signing key (min 32 chars) |
+| `JWT_ISSUER` | `swovnai` | JWT issuer claim |
+| `JWT_AUDIENCE` | `swovnai` | JWT audience claim |
+| `ASPNETCORE_ENVIRONMENT` | `Production` | Runtime environment |
 
-### 4.2. API Policy — Validate JWT + Inject Headers
+### 4.2. MainModule (api-service-2)
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `ConnectionStrings__DefaultConnection` | `Host=...;Port=5432;Database=postgres;...` | PostgreSQL connection string |
+| `ASPNETCORE_ENVIRONMENT` | `Production` | Runtime environment |
+
+---
+
+## 5. API Management Configuration
+
+### 5.1. APIs
+
+| API ID | Display Name | Path | Backend Service |
+|--------|-------------|------|----------------|
+| `api-service-1` | AuthModule | `/auth-api` | `https://api-service-1.<fqdn>` |
+| `api-service-2` | MainModule | `/products-api` | `https://api-service-2.<fqdn>` |
+
+### 5.2. Operations
+
+Mỗi API có **catch-all operations** cho tất cả HTTP methods:
+- `GET /{*path}`
+- `POST /{*path}`
+- `PUT /{*path}`
+- `DELETE /{*path}`
+- `PATCH /{*path}`
+- `OPTIONS /{*path}`
+
+### 5.3. AuthModule Policy
 
 ```xml
-<!-- Global policy (applies to all APIs) -->
 <policies>
   <inbound>
-    <!-- Validate JWT via shared secret (for internal JWTs) -->
-    <validate-jwt header-name="Authorization"
-                  failed-validation-httpcode="401"
-                  output-token-variable-name="jwt">
-      <issuer-signing-keys>
-        <key>{{JWT_SECRET}}</key>
-      </issuer-signing-keys>
-      <audiences>
-        <audience>swovnai</audience>
-      </audiences>
-    </validate-jwt>
-
-    <!-- Extract claims và forward cho downstream -->
-    <set-header name="X-APIM-UserId" exists-action="override">
-      <value>@{
-        var jwt = (JwtToken)context.Variables.GetValueOrDefault("jwt");
-        return jwt?.Claims["userId"]?.FirstOrDefault()
-            ?? jwt?.Claims["oid"]?.FirstOrDefault()
-            ?? "";
-      }</value>
-    </set-header>
-    <set-header name="X-APIM-AccountId" exists-action="override">
-      <value>@{
-        var jwt = (JwtToken)context.Variables.GetValueOrDefault("jwt");
-        return jwt?.Claims["accountId"]?.FirstOrDefault() ?? "";
-      }</value>
-    </set-header>
-    <set-header name="X-APIM-Email" exists-action="override">
-      <value>@{
-        var jwt = (JwtToken)context.Variables.GetValueOrDefault("jwt");
-        return jwt?.Claims["email"]?.FirstOrDefault() ?? "";
-      }</value>
-    </set-header>
-    <set-header name="X-APIM-Role" exists-action="override">
-      <value>@{
-        var jwt = (JwtToken)context.Variables.GetValueOrDefault("jwt");
-        return jwt?.Claims["role"]?.FirstOrDefault() ?? "User";
-      }</value>
-    </set-header>
-
-    <!-- Rate limiting -->
-    <rate-limit-by-key calls="100" renewal-period="60"
-                       counter-key="@(context.Request.IpAddress)" />
-
     <!-- CORS -->
-    <cors>
-      <allowed-origins>
-        <origin>https://<frontend-app>.azurestaticapps.net</origin>
-      </allowed-origins>
+    <cors allow-credentials="false">
+      <allowed-origins><origin>*</origin></allowed-origins>
       <allowed-methods>
-        <method>GET</method>
-        <method>POST</method>
-        <method>PUT</method>
-        <method>DELETE</method>
-        <method>PATCH</method>
+        <method>GET</method><method>POST</method><method>PUT</method>
+        <method>DELETE</method><method>PATCH</method><method>OPTIONS</method>
       </allowed-methods>
-      <allowed-headers>
-        <header>Authorization</header>
-        <header>Content-Type</header>
-      </allowed-headers>
+      <allowed-headers><header>*</header></allowed-headers>
     </cors>
+
+    <!-- Extract path parameter -->
+    <set-variable name="requestPath" value="@((string)context.Request.MatchedParameters["path"])" />
+
+    <!-- OPTIONS: Return 200 immediately -->
+    <choose>
+      <when condition="@(context.Request.Method == "OPTIONS")">
+        <return-response><set-status code="200" /></return-response>
+      </when>
+
+      <!-- Public endpoint: /login -->
+      <when condition="@(context.Variables["requestPath"].ToString().Equals("login", StringComparison.OrdinalIgnoreCase))">
+        <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <rewrite-uri template="/api/auth/{path}" />
+      </when>
+
+      <!-- Protected: Call Gatekeeper -->
+      <otherwise>
+        <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.IpAddress)" />
+        <send-request mode="new" response-variable-name="gatekeeperResponse" timeout="20">
+          <set-url>@("https://api-service-1/api/gatekeeper")</set-url>
+          <set-method>POST</set-method>
+          <set-body>@{ ... build GatekeeperRequest ... }</set-body>
+        </send-request>
+        <!-- Check response and forward/deny -->
+        <choose>...</choose>
+      </otherwise>
+    </choose>
   </inbound>
 </policies>
 ```
 
-### 4.3. Nếu dùng APIM thay cho LocalGateway
+### 5.4. MainModule Policy
 
-Đặt `GATEWAY_MODE=APIM` trong LocalGateway App Service Settings.
+Tương tự AuthModule nhưng:
+- Rewrite URI: `/api/{path}`
+- Gọi Gatekeeper cho **tất cả** request (không bypass public)
 
 ---
 
-## 5. Cấu hình Frontend
+## 6. Database Schema
 
-### 5.1. Azure Static Web App
+### 6.1. Core Tables
 
-```bash
-# Deploy frontend lên Static Web App
-az staticwebapp appsettings set \
-  --name <frontend-app-name> \
-  --setting-names \
-    VITE_MAIN_API_BASE_URL=https://<apim-or-gateway-url>/api \
-    VITE_AUTH_API_BASE_URL=https://<apim-or-gateway-url>/api
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  accounts   │────│   user_permissions │────│   permissions   │
+└─────────────┘     └──────────────────┘     └─────────────────┘
+       │                                          ▲
+       │                                          │
+       │  ┌─────────────┐     ┌──────────────────┘
+       │  │    users    │
+       │  └─────────────┘
+       │
+       │  ┌─────────────┐     ┌──────────────────────┐
+       └──│   tokens    │────│  token_permissions   │
+          └─────────────┘     └──────────────────────┘
 ```
 
-### 5.2. Nếu dùng Azure Front Door / CDN
+### 6.2. Permission System
 
-Cập nhật `VITE_*_API_BASE_URL` trong Static Web App settings trỏ đến:
-- APIM: `https://<apim-name>.azure-api.net`
-- Hoặc LocalGateway: `https://<gateway-app>.azurewebsites.net`
+- **AuthModule**: Owner của bảng `permissions`, chạy migrations
+- **MainModule**: Consumer - chỉ đọc/ghi qua DbContext riêng với `ExcludeFromMigrations()`
+
+### 6.3. Token Storage
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `uuid` | Primary key |
+| `token` | `varchar(4000)` | Raw JWT - UNIQUE |
+| `token_type` | `varchar(50)` | Default 'Bearer' |
+| `created_by` | `uuid` | FK to accounts (required) |
+| `account_id` | `uuid` | FK to accounts (nullable) |
+| `expires_at` | `timestamp` | Optional expiration |
+| `is_revoked` | `boolean` | Default false |
 
 ---
 
-## 6. Database Migration
+## 7. Deployment Flow
 
-Sau khi AuthModule đã chạy trên Azure, chạy migration để tạo bảng:
+### 7.1. Script Overview (`infrastructure/azure/deploy.sh`)
+
+```
+1. Load .env configuration
+2. Login Azure + ACR
+3. Build & push Docker images
+   - api-service-1 (AuthModule)
+   - api-service-2 (MainModule)
+   - react-frontend
+4. Create/Update Container Apps Environment
+5. Deploy Container Apps
+6. Configure APIM
+   - Create/Update APIs
+   - Create catch-all operations
+   - Set policies (CORS, Rate Limit, Gatekeeper)
+```
+
+### 7.2. Key Flags
+
+| Flag | Description |
+|------|-------------|
+| `IMAGE_TAG` | Custom image tag (optional, auto-generate if not set) |
 
 ```bash
-# SSH vào AuthModule container và chạy migration
-az webapp create-remote-connection \
-  --resource-group <rg-name> \
-  --name <authmodule-app-name>
+# Deploy with auto-generated timestamp
+./deploy.sh
 
-# Hoặc dùng curl trigger (nếu có endpoint)
-curl -X POST https://<authmodule-app>.azurewebsites.net/api/migrate \
-  -H "Authorization: Bearer <admin-token>"
+# Deploy with specific tag
+IMAGE_TAG=v1.2.3 ./deploy.sh
 ```
 
 ---
 
-## 7. Kiểm tra sau Deploy
+## 8. Security Considerations
 
-```bash
-# Test AuthModule
-curl https://<authmodule-app>.azurewebsites.net/api/permissions
+### 8.1. Network Security
+- Container Apps sử dụng **Internal Ingress** - chỉ APIM được gọi
+- Database Firewall: Chỉ cho phép Azure services
+- Không public endpoints cho backend services
 
-# Test Login
-curl -X POST https://<authmodule-app>.azurewebsites.net/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"...","entraIdObjectId":"..."}'
+### 8.2. Authentication Flow
+1. Client gửi JWT trong `Authorization: Bearer <token>`
+2. APIM gọi Gatekeeper để validate
+3. Gatekeeper check:
+   - Token exists in DB? → External Token (TokenPermission)
+   - Token valid JWT? → Internal JWT (UserPermission)
+4. APIM inject headers và forward request
 
-# Test Gatekeeper
-curl -X POST https://<authmodule-app>.azurewebsites.net/api/gatekeeper \
-  -H "Content-Type: application/json" \
-  -d '{"authorizationHeader":"Bearer <token>","method":"GET","path":"/api/products"}'
-
-# Test Frontend
-curl https://<frontend-app>.azurestaticapps.net
-```
-
----
-
-## 8. Environment Variables tổng hợp
-
-| Variable | AuthModule | MainModule | LocalGateway | Frontend |
-|----------|------------|------------|-------------|----------|
-| `ConnectionStrings__DefaultConnection` | PostgreSQL connection | PostgreSQL connection | — | — |
-| `JWT_SECRET` | JWT signing key | — | — | — |
-| `JWT_ISSUER` | swovnai | — | — | — |
-| `JWT_AUDIENCE` | swovnai | — | — | — |
-| `GATEWAY_MODE` | — | — | Local / APIM | — |
-| `AUTH_MODULE_URL` | — | — | Backend URL | — |
-| `MAIN_MODULE_URL` | — | — | Backend URL | — |
-| `VITE_MAIN_API_BASE_URL` | — | — | — | API gateway URL |
-| `VITE_AUTH_API_BASE_URL` | — | — | — | API gateway URL |
-| `DOCKER_CUSTOM_IMAGE_NAME` | ACR image | ACR image | ACR image | — |
+### 8.3. Rate Limiting
+- **100 requests/minute** per IP address
+- Applied at APIM level trước khi gọi backend
 
 ---
 
 ## 9. Troubleshooting
 
-### Container không start
-
+### 9.1. Container không start
 ```bash
 # Xem logs
-az webapp log tail --resource-group <rg-name> --name <app-name>
+az containerapp logs show --name api-service-1 --resource-group rg-nguyentienthuan-0001 --tail 100
 
-# Kiểm tra app settings
-az webapp config appsettings show --resource-group <rg-name> --name <app-name>
+# Restart
+az containerapp restart --name api-service-1 --resource-group rg-nguyentienthuan-0001
 ```
 
-### Lỗi kết nối PostgreSQL
-
+### 9.2. Database connection fail
 ```bash
-# Kiểm tra firewall
-az postgres flexible-server firewall-rule list \
-  --resource-group <rg-name> \
-  --server-name <pg-server-name>
+# Kiểm tra firewall rules
+az postgres flexible-server firewall-rule list --resource-group rg-nguyentienthuan-0001 --server-name pg-tienthuan-db
 
-# Thêm firewall rule cho App Service outbound IPs
-az postgres flexible-server firewall-rule create \
-  --resource-group <rg-name> \
-  --server-name <pg-server-name> \
-  --rule-name allow-azure-apps \
-  --start-ip-address 0.0.0.0 \
-  --end-ip-address 0.0.0.0
+# Test connection
+docker run --rm postgres:16 psql "host=pg-tienthuan-db.postgres.database.azure.com port=5432 dbname=postgres user=pgtienthuandb password='xxx' sslmode=require" -c "SELECT 1"
 ```
 
-### JWT validation fail
+### 9.3. APIM policy error
+```bash
+# Test Gatekeeper endpoint
+curl -X POST "https://api-service-1.<fqdn>/api/gatekeeper" \
+  -H "Content-Type: application/json" \
+  -d '{"authorizationHeader":"Bearer <token>","method":"GET","path":"/api/products"}'
+```
 
-- Đảm bảo `JWT_SECRET` giống nhau ở tất cả services
-- Kiểm tra `JWT_ISSUER` và `JWT_AUDIENCE` match với JWT claims
+### 9.4. Common Error Codes
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| 401 | Invalid/expired token | Re-login |
+| 403 | No permission | Check UserPermission/TokenPermission |
+| 503 | Gatekeeper unreachable | Check AuthModule logs |

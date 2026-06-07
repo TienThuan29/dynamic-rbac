@@ -332,7 +332,7 @@ az apim nv create \
 # ── 7. Cấu hình APIM policy: Validate JWT + CORS + Return 200 for OPTIONS ─────
 
 echo ""
-echo "[7/7] Cấu hình APIM policy (Giải quyết triệt để CORS)..."
+echo "[7/7] Cấu hình APIM policy ..."
 
 # AuthModule policy
 # NOTE: Dùng HEREDOC KHÔNG có nháy đơn để expand ${URL_API1} trong policy
