@@ -52,6 +52,10 @@ public class GatekeeperController : ControllerBase
         }
 
         var token = GetAccessTokenFromHeader(authHeader);
+        if (token is null)
+        {
+            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
+        }
 
         // Decode and validate the JWT 
         Guid userId;
@@ -192,13 +196,13 @@ public class GatekeeperController : ControllerBase
             $"Access denied: no permission for {request.Method} {request.Path}", 403));
     }
 
-    private string GetAccessTokenFromHeader(string? authHeader)
+    private string? GetAccessTokenFromHeader(string? authHeader)
     {
-        string token = authHeader["Bearer ".Length..].Trim();
+        string token = authHeader!["Bearer ".Length..].Trim();
         if (string.IsNullOrEmpty(token))
         {
             _logger.LogWarning("Gatekeeper: empty token");
-            return Ok(GatekeeperResponseDto.Deny("Token is empty", 401));
+            return null;
         }
         return token;
     }
