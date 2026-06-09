@@ -1,66 +1,50 @@
-using AuthModule.Data;
 using AuthModule.Dal.Entities;
-using AuthModule.DTOs;
+using AuthModule.Dal.Repositories;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Mappers;
-using Microsoft.EntityFrameworkCore;
 
 namespace AuthModule.Services;
 
 public interface IPermissionGroupService
 {
-    Task<PermissionGroupDto?> GetByIdAsync(Guid id, CancellationToken ct = default);
-    Task<PagedResult<PermissionGroupDto>> GetAllAsync(int page, int pageSize, string? search, CancellationToken ct = default);
-    Task<PermissionGroupDto> CreateAsync(CreatePermissionGroupDto dto, Guid? createdBy, CancellationToken ct = default);
-    Task<PermissionGroupDto> UpdateAsync(Guid id, UpdatePermissionGroupDto dto, Guid? updatedBy, CancellationToken ct = default);
+    Task<PermissionGroupResponse?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<PagedResult<PermissionGroupResponse>> GetAllAsync(int page, int pageSize, string? search, CancellationToken ct = default);
+    Task<PermissionGroupResponse> CreateAsync(CreatePermissionGroupRequest dto, Guid? createdBy, CancellationToken ct = default);
+    Task<PermissionGroupResponse> UpdateAsync(Guid id, UpdatePermissionGroupRequest dto, Guid? updatedBy, CancellationToken ct = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct = default);
 }
 
 public class PermissionGroupService : IPermissionGroupService
 {
-    private readonly AuthDbContext _db;
+    private readonly IPermissionGroupRepository _groupRepo;
     private readonly IPermissionService _permissionService;
 
-    public PermissionGroupService(AuthDbContext db, IPermissionService permissionService)
+    public PermissionGroupService(
+        IPermissionGroupRepository groupRepo,
+        IPermissionService permissionService)
     {
-        _db = db;
+        _groupRepo = groupRepo;
         _permissionService = permissionService;
     }
 
-    public async Task<PermissionGroupDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    public async Task<PermissionGroupResponse?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        var entity = await _db.PermissionGroups
-            .AsNoTracking()
-            .FirstOrDefaultAsync(g => g.Id == id, ct);
-
-        return entity == null ? null : await PermissionGroupMapper.ToDtoAsync(entity, _permissionService, ct);
+        var entity = await _groupRepo.GetByIdAsync(id, ct);
+        return entity == null ? null : await PermissionGroupMapper.ToResponseAsync(entity, _permissionService, ct);
     }
 
-    public async Task<PagedResult<PermissionGroupDto>> GetAllAsync(
+    public async Task<PagedResult<PermissionGroupResponse>> GetAllAsync(
         int page, int pageSize, string? search, CancellationToken ct = default)
     {
-        var query = _db.PermissionGroups.AsNoTracking();
+        var (items, totalCount) = await _groupRepo.GetAllAsync(page, pageSize, search, ct);
 
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var s = search.Trim().ToLower();
-            query = query.Where(g =>
-                g.GroupName.ToLower().Contains(s) ||
-                (g.Description != null && g.Description.ToLower().Contains(s)));
-        }
-
-        var totalCount = await query.CountAsync(ct);
-
-        var items = await query
-            .OrderByDescending(g => g.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(ct);
-
-        var result = new List<PermissionGroupDto>();
+        var result = new List<PermissionGroupResponse>();
         foreach (var item in items)
-            result.Add(await PermissionGroupMapper.ToDtoAsync(item, _permissionService, ct));
+            result.Add(await PermissionGroupMapper.ToResponseAsync(item, _permissionService, ct));
 
-        return new PagedResult<PermissionGroupDto>
+        return new PagedResult<PermissionGroupResponse>
         {
             Items = result,
             TotalCount = totalCount,
@@ -69,8 +53,8 @@ public class PermissionGroupService : IPermissionGroupService
         };
     }
 
-    public async Task<PermissionGroupDto> CreateAsync(
-        CreatePermissionGroupDto dto, Guid? createdBy, CancellationToken ct = default)
+    public async Task<PermissionGroupResponse> CreateAsync(
+        CreatePermissionGroupRequest dto, Guid? createdBy, CancellationToken ct = default)
     {
         var entity = new PermissionGroup
         {
@@ -82,16 +66,16 @@ public class PermissionGroupService : IPermissionGroupService
             CreatedAt = DateTime.UtcNow
         };
 
-        _db.PermissionGroups.Add(entity);
-        await _db.SaveChangesAsync(ct);
+        await _groupRepo.AddAsync(entity, ct);
+        await _groupRepo.SaveChangesAsync(ct);
 
-        return await PermissionGroupMapper.ToDtoAsync(entity, _permissionService, ct);
+        return await PermissionGroupMapper.ToResponseAsync(entity, _permissionService, ct);
     }
 
-    public async Task<PermissionGroupDto> UpdateAsync(
-        Guid id, UpdatePermissionGroupDto dto, Guid? updatedBy, CancellationToken ct = default)
+    public async Task<PermissionGroupResponse> UpdateAsync(
+        Guid id, UpdatePermissionGroupRequest dto, Guid? updatedBy, CancellationToken ct = default)
     {
-        var entity = await _db.PermissionGroups.FindAsync(new object[] { id }, ct)
+        var entity = await _groupRepo.GetByIdWithTrackingAsync(id, ct)
             ?? throw new KeyNotFoundException($"PermissionGroup {id} not found.");
 
         if (dto.GroupName != null)
@@ -104,17 +88,17 @@ public class PermissionGroupService : IPermissionGroupService
         entity.UpdatedBy = updatedBy;
         entity.UpdatedAt = DateTime.UtcNow;
 
-        await _db.SaveChangesAsync(ct);
-        return await PermissionGroupMapper.ToDtoAsync(entity, _permissionService, ct);
+        await _groupRepo.SaveChangesAsync(ct);
+        return await PermissionGroupMapper.ToResponseAsync(entity, _permissionService, ct);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
     {
-        var entity = await _db.PermissionGroups.FindAsync(new object[] { id }, ct);
+        var entity = await _groupRepo.GetByIdWithTrackingAsync(id, ct);
         if (entity == null) return false;
 
-        _db.PermissionGroups.Remove(entity);
-        await _db.SaveChangesAsync(ct);
+        await _groupRepo.RemoveAsync(entity, ct);
+        await _groupRepo.SaveChangesAsync(ct);
         return true;
     }
 }

@@ -1,11 +1,11 @@
 using AuthModule.Dal.Entities;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Responses;
 
 namespace AuthModule.Mappers;
 
 public static class PermissionMapper
 {
-    public static PermissionDto ToDto(Permission p) => new()
+    public static PermissionResponse ToResponse(Permission p) => new()
     {
         Id = p.Id,
         Method = p.Method,

@@ -25,6 +25,8 @@
 |------------|--------|---------|
 | `Permission` (entity) | `AuthModule/Dal/Entities/Permission.cs` | Bảng nguồn — sở hữu schema |
 | `Permission` (entity mirror) | `MainModule/Dal/Entities/Permission.cs` | Mirror, chỉ read/write — không tạo migration |
+| `Token` (entity) | `AuthModule/Dal/Entities/Token.cs` | Lưu raw JWT cho external apps |
+| `TokenPermission` (entity) | `AuthModule/Dal/Entities/TokenPermission.cs` | Mapping: token → permission |
 | `PermissionMetaAttribute` | `*/Attributes/PermissionMetaAttribute.cs` | Annotation metadata trên controller/action |
 | `PermissionSyncExtensions` | `*/Extensions/PermissionSyncExtensions.cs` | Extension method scan endpoint & sync DB |
 | `Program.cs` | mỗi module | Wire up `app.SyncEndpointPermissionsAsync()` lúc startup |
@@ -41,6 +43,9 @@ erDiagram
     accounts ||--o{ user_permissions : "1:N"
     permissions ||--o{ user_permissions : "1:N"
     permission_groups }o--|| accounts : "created_by/updated_by"
+
+    tokens ||--o{ token_permissions : "1:N"
+    permissions ||--o{ token_permissions : "1:N"
 
     permissions {
         uuid id PK
@@ -64,6 +69,23 @@ erDiagram
         timestamp assigned_at
         uuid assigned_by
         timestamp expires_at
+    }
+
+    token_permissions {
+        uuid token_id PK_FK
+        uuid permission_id PK_FK
+        timestamp granted_at
+        timestamp expires_at
+    }
+
+    tokens {
+        uuid id PK
+        uuid created_by FK
+        uuid account_id FK "nullable — external tokens may have no account"
+        varchar token "raw JWT, UNIQUE"
+        varchar token_type "default 'Bearer'"
+        timestamp expires_at "nullable"
+        bool is_revoked "default false"
     }
 
     permission_groups {
@@ -554,3 +576,167 @@ sequenceDiagram
 
     GK-->>GW: GatekeeperResponse { allowed, statusCode, userId, ... }
 ```
+
+---
+
+## 12. External Token — Long-Lived Bearer Token cho External Apps
+
+### 12.1. Mục đích
+
+Cho phép **external applications** (ứng dụng bên thứ ba, script, CI/CD, service-to-service)
+truy cập API qua một long-lived token mà không cần user identity. Quyền được gán
+trực tiếp vào token thông qua `TokenPermission`.
+
+### 12.2. So sánh Internal JWT vs External Token
+
+| | Internal JWT | External Token |
+|--|--|--|
+| Nguồn | `AuthController.Login()` | `TokenController.Create()` |
+| Lưu trữ | Không lưu (stateless) | Lưu raw JWT trong `tokens` table |
+| Identity | Có (userId, accountId, email) | Không (role = `"ExternalToken"`) |
+| Quyền check | `UserPermission` (theo account) | `TokenPermission` (theo token) |
+| Fallback | Không | Không |
+| Dispatch | DB lookup trước → không tìm thấy → JWT validate | DB lookup → tìm thấy → check TokenPermission |
+
+### 12.3. Kiến trúc database
+
+```
+tokens                                    token_permissions
++-----------+                          +------------------+
+| id (PK)   |──┐                      | token_id (FK)   |
+| created_by|--│─── FK (required)     | permission_id   |
+| account_id|──┘                      | granted_at      |
+| access_token|─── UNIQUE             | expires_at (opt)|
+| token_type   |                      +------------------+
+| expires_at   |
+| is_revoked   |
++-----------+
+
+tokens.created_by    → accounts.id    (required — ai tạo token)
+tokens.account_id    → accounts.id    (nullable — external token có thể không gắn account)
+```
+
+### 12.4. Luồng tạo token
+
+```
+Admin (UI Dashboard)
+  │
+  ├── Chọn "No account" (accountId = null)
+  ├── Chọn permissions: "products:list", "products:read"
+  ├── Đặt expiresInMinutes (tuỳ chọn)
+  │
+  ▼
+TokenController.Create()
+  │
+  ├── Sinh raw JWT (userId=Guid.Empty, accountId=Guid.Empty, role="ExternalToken")
+  ├── Lưu vào tokens table
+  ├── Lưu TokenPermission cho từng permissionId
+  │
+  ▼
+Trả về raw JWT cho admin (chỉ hiển thị 1 lần duy nhất)
+```
+
+### 12.5. Luồng authorization tại Gatekeeper
+
+```
+POST /api/gatekeeper
+  │
+  ├── Extract "Bearer <token>"
+  ├── Lookup tokens table: WHERE access_token = '<token>'
+  │
+  ├── Tìm thấy → AuthorizeByExternalTokenAsync()
+  │     │
+  │     ├── Check IsRevoked → DENY 401 nếu revoked
+  │     ├── Check ExpiresAt → DENY 401 nếu expired
+  │     ├── Tạo permission_code từ path + method
+  │     │     (GET /api/products → "products:list")
+  │     ├── Tìm Permission có PermissionCode khớp
+  │     │     → Check TokenPermission (tokenId, permissionId)
+  │     │         → Có quyền → ALLOW
+  │     ├── Fallback: Endpoint+Method match
+  │     │     → Check TokenPermission
+  │     │         → Có quyền → ALLOW
+  │     └── Không match → DENY 403
+  │
+  └── Không tìm thấy → AuthorizeByJwtAsync()
+        (internal JWT — validate + check UserPermission)
+```
+
+### 12.6. Priority: PermissionCode trước, Endpoint+Method sau
+
+Gatekeeper kiểm tra quyền cho external token theo 2 bước:
+
+**Bước 1 — PermissionCode matching (ưu tiên cao)**
+
+```
+Request: GET /api/products
+Code derive: "products:list"
+Lookup: Permission WHERE permission_code = 'products:list' AND is_active = true
+  → Có → Check TokenPermission (tokenId, permission.Id)
+  → TokenPermission tồn tại → ALLOW
+  → Không tồn tại → DENY 403
+```
+
+**Bước 2 — Endpoint+Method matching (fallback)**
+
+```
+Request: GET /api/products
+Lookup: Permission WHERE method = 'GET' AND endpoint = '/api/products' AND is_active = true
+  → Có → Check TokenPermission
+  → TokenPermission tồn tại → ALLOW
+  → Không tồn tại → DENY 403
+  → Không tìm thấy Permission → DENY 403 "No permission record"
+```
+
+### 12.7. Cách gán quyền cho external token
+
+Admin gán quyền bằng **permission ID** (UUID) trong UI Dashboard:
+
+```
+Token được gán: "products:list"
+  → TokenPermission(token_id=X, permission_id=Y)
+     └── Y = ID của permission có permission_code = 'products:list'
+
+Token không được gán: "orders:create"
+  → Token không có TokenPermission nào cho orders
+  → DENY 403 khi gọi POST /api/orders
+```
+
+### 12.8. Cấu trúc row `tokens` trong DB
+
+| Cột | Giá trị | Note |
+|-----|---------|------|
+| `id` | `Guid.NewGuid()` | |
+| `created_by` | `account_id` của admin tạo | Required — ai tạo |
+| `account_id` | `NULL` cho external token | External token không gắn account |
+| `access_token` | Raw JWT string | UNIQUE — lookup bằng token này |
+| `token_type` | `"Bearer"` | |
+| `expires_at` | `NULL` hoặc `now + minutes` | Không bắt buộc |
+| `is_revoked` | `false` | |
+
+### 12.9. Response khi external token được allow
+
+```json
+{
+  "allowed": true,
+  "statusCode": 200,
+  "userId": "<created_by GUID>",
+  "accountId": "<created_by GUID>",
+  "email": "",
+  "role": "ExternalToken"
+}
+```
+
+> **Lưu ý:** `role = "ExternalToken"` — external token không mang identity của user,
+> chỉ mang quyền được gán. Downstream services nhận `X-Role: ExternalToken` để phân biệt.
+
+### 12.10. Các thay đổi gần đây (2026-06-05)
+
+| Thay đổi | Chi tiết |
+|-----------|---------|
+| Thêm `tokens` + `token_permissions` table | Migration: `20250605000000_AddTokens` |
+| DB-first dispatch | Luôn lookup DB trước — tìm thấy là external token |
+| Bỏ fallback `UserPermission` | External token **chỉ** check qua `TokenPermission` |
+| JWT không chứa user/account identity | External token sinh với `Guid.Empty` cho userId/accountId |
+| PermissionCode matching | Gatekeeper ưu tiên match theo `PermissionCode` trước Endpoint+Method |
+

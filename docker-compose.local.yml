@@ -1,0 +1,113 @@
+# docker-compose.local.yml — Local development using local source code builds
+# Uses Azure PostgreSQL from be/.env.prod (not local Docker PostgreSQL)
+#
+# Prerequisites:
+#   1. docker compose -f docker-compose.local.yml build
+#   2. docker compose -f docker-compose.local.yml up
+#
+# Ports exposed:
+#   - 5001: AuthModule
+#   - 5002: MainModule
+#   - 5000: LocalGateway (YARP reverse proxy)
+#   - 3000: React Frontend
+#
+# Test endpoints:
+#   - AuthModule:  http://localhost:5001/api/auth/login
+#   - MainModule: http://localhost:5002/api/products
+#   - Gateway:    http://localhost:5000/api/auth/login
+
+services:
+  authmodule:
+    build:
+      context: ./be/AuthModule
+      dockerfile: Dockerfile
+    container_name: authmodule_local
+    env_file:
+      - ./be/.env.prod
+    environment:
+      ConnectionStrings__DefaultConnection: >-
+        Host=${PGHOST};
+        Port=${PGPORT};
+        Database=${POSTGRES_DB};
+        Username=${POSTGRES_USER};
+        Password=${POSTGRES_PASSWORD};
+        Ssl Mode=Require
+      JWT_SECRET: xRsbQCknWZriINldt02Gjp3UaOOByM9Eoqanqz9fMT1
+      JWT_ISSUER: swovnai
+      JWT_AUDIENCE: swovnai
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5001:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/permissions || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  mainmodule:
+    build:
+      context: ./be/MainModule
+      dockerfile: Dockerfile
+    container_name: mainmodule_local
+    env_file:
+      - ./be/.env.prod
+    environment:
+      ConnectionStrings__DefaultConnection: >-
+        Host=${PGHOST};
+        Port=${PGPORT};
+        Database=${POSTGRES_DB};
+        Username=${POSTGRES_USER};
+        Password=${POSTGRES_PASSWORD};
+        Ssl Mode=Require
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5002:8080"
+    depends_on:
+      - authmodule
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/products || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  localgateway:
+    build:
+      context: ./be/LocalGateway
+      dockerfile: Dockerfile
+    container_name: localgateway_local
+    environment:
+      GATEWAY_MODE: Local
+      AUTH_MODULE_URL: http://authmodule_local:8080
+      MAIN_MODULE_URL: http://mainmodule_local:8080
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5000:8080"
+    depends_on:
+      - authmodule
+      - mainmodule
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./fe
+      dockerfile: Dockerfile
+      args:
+        VITE_AUTH_API_BASE_URL: http://localhost:5000/api/auth
+        VITE_MAIN_API_BASE_URL: http://localhost:5000/api/products
+    container_name: frontend_local
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3000:8080"
+    depends_on:
+      - localgateway

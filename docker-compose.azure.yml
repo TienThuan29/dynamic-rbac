@@ -1,0 +1,124 @@
+version: "3.9"
+
+# docker-compose.azure.yml — Local development using Azure Container Registry images
+#
+# Prerequisites:
+#   1. az acr login --name dynamicrbac
+#   2. ./scripts/build-push.sh dynamicrbac.azurecr.io <tag>
+#   3. docker compose -f docker-compose.azure.yml up
+#
+# Environment: set vars in .env.azure or export before running:
+#   ACR_SERVER       = dynamicrbac.azurecr.io
+#   IMAGE_TAG        = latest (or a specific tag)
+#   POSTGRES_HOST    = your-pg-server.postgres.database.azure.com
+#   POSTGRES_USER    = youruser
+#   POSTGRES_PASSWORD = yourpassword
+#   POSTGRES_DB      = postgres
+#   JWT_SECRET       = your-minimum-32-character-secret-key
+#   GATEWAY_MODE     = Local (or APIM)
+#   AUTH_MODULE_URL  = http://authmodule:8080
+#   MAIN_MODULE_URL  = http://mainmodule:8080
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres_azure_dev
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yourpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_azure:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  authmodule:
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/authmodule:${IMAGE_TAG:-latest}
+    container_name: authmodule
+    environment:
+      ConnectionStrings__DefaultConnection: >-
+        Host=${POSTGRES_HOST:-localhost};
+        Port=${POSTGRES_PORT:-5432};
+        Database=${POSTGRES_DB:-postgres};
+        Username=${POSTGRES_USER:-postgres};
+        Password=${POSTGRES_PASSWORD:-yourpassword}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-swovnai}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-swovnai}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5001:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/permissions || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mainmodule:
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/mainmodule:${IMAGE_TAG:-latest}
+    container_name: mainmodule
+    environment:
+      ConnectionStrings__DefaultConnection: >-
+        Host=${POSTGRES_HOST:-localhost};
+        Port=${POSTGRES_PORT:-5432};
+        Database=${POSTGRES_DB:-postgres};
+        Username=${POSTGRES_USER:-postgres};
+        Password=${POSTGRES_PASSWORD:-yourpassword}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5002:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      authmodule:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/products || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  localgateway:
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/localgateway:${IMAGE_TAG:-latest}
+    container_name: localgateway
+    environment:
+      GATEWAY_MODE: ${GATEWAY_MODE:-Local}
+      AUTH_MODULE_URL: ${AUTH_MODULE_URL:-http://authmodule:8080}
+      MAIN_MODULE_URL: ${MAIN_MODULE_URL:-http://mainmodule:8080}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5000:8080"
+    depends_on:
+      authmodule:
+        condition: service_healthy
+      mainmodule:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    image: ${ACR_SERVER:-dynamicrbac.azurecr.io}/dynamic-rbac/frontend:${IMAGE_TAG:-latest}
+    container_name: frontend
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3000:8080"
+    depends_on:
+      - localgateway
+
+volumes:
+  postgres_data_azure:

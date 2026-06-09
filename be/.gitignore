@@ -31,8 +31,7 @@ bld/
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.prod
 
 # Database
 *.db

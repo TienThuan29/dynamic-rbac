@@ -1,41 +1,44 @@
 using AuthModule.Dal.Entities;
-using AuthModule.Data;
-using AuthModule.DTOs;
-using Microsoft.EntityFrameworkCore;
+using AuthModule.Dal.Repositories;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 
 namespace AuthModule.Services;
 
 public interface IAuthService
 {
-    Task<AuthenticatedUserDto> LoginOrCreateUserAsync(LoginDto loginDto, CancellationToken cancellationToken = default);
-
-    Task<List<UserPermissionDto>> GetPermissionsAsync(Guid accountId, CancellationToken cancellationToken = default);
+    Task<AuthenticatedUserResponse> LoginOrCreateUserAsync(LoginRequest loginDto, CancellationToken cancellationToken = default);
+    Task<List<UserPermissionResponse>> GetPermissionsAsync(Guid accountId, CancellationToken cancellationToken = default);
 }
 
 
 public class AuthService : IAuthService
 {
-    private readonly AuthDbContext _dbContext;
+    private readonly IAccountRepository _accountRepo;
+    private readonly IUserRepository _userRepo;
+    private readonly IUserPermissionRepository _userPermRepo;
 
-    public AuthService(AuthDbContext dbContext)
+    public AuthService(
+        IAccountRepository accountRepo,
+        IUserRepository userRepo,
+        IUserPermissionRepository userPermRepo)
     {
-        _dbContext = dbContext;
+        _accountRepo = accountRepo;
+        _userRepo = userRepo;
+        _userPermRepo = userPermRepo;
     }
 
-    public async Task<AuthenticatedUserDto> LoginOrCreateUserAsync(
-        LoginDto loginDto,
-        CancellationToken cancellationToken = default)
+    public async Task<AuthenticatedUserResponse> LoginOrCreateUserAsync(
+        LoginRequest loginDto, CancellationToken ct = default)
     {
-        var existingAccount = await _dbContext.Accounts
-            .Include(a => a.User)
-            .FirstOrDefaultAsync(a => a.EntraIdObjectId == loginDto.EntraIdObjectId, cancellationToken);
+        var existingAccount = await _accountRepo.GetByEntraIdAsync(loginDto.EntraIdObjectId, ct);
 
         if (existingAccount?.User != null)
         {
             UpdateExistingAccount(existingAccount, loginDto);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _accountRepo.SaveChangesAsync(ct);
 
-            return new AuthenticatedUserDto
+            return new AuthenticatedUserResponse
             {
                 UserId = existingAccount.User.Id,
                 AccountId = existingAccount.Id,
@@ -68,13 +71,11 @@ public class AuthService : IAuthService
             CreatedAt = DateTime.UtcNow
         };
 
-        newAccount.User = newUser;
+        await _accountRepo.AddAsync(newAccount, ct);
+        await _userRepo.AddAsync(newUser, ct);
+        await _accountRepo.SaveChangesAsync(ct);
 
-        _dbContext.Accounts.Add(newAccount);
-        _dbContext.Users.Add(newUser);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        return new AuthenticatedUserDto
+        return new AuthenticatedUserResponse
         {
             UserId = newUser.Id,
             AccountId = newAccount.Id,
@@ -85,39 +86,41 @@ public class AuthService : IAuthService
         };
     }
 
-    public async Task<List<UserPermissionDto>> GetPermissionsAsync(
-        Guid accountId,
-        CancellationToken cancellationToken = default)
+    public async Task<List<UserPermissionResponse>> GetPermissionsAsync(
+        Guid accountId, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
 
-        return await _dbContext.UserPermissions
-            .AsNoTracking()
-            .Where(up => up.AccountId == accountId &&
-                         (up.ExpiresAt == null || up.ExpiresAt > now) &&
-                         up.Permission.IsActive)
-            .Select(up => new UserPermissionDto
-            {
-                AccountId = up.AccountId,
-                PermissionId = up.PermissionId,
-                PermissionCode = up.Permission.PermissionCode,
-                PermissionName = up.Permission.PermissionName,
-                Method = up.Permission.Method,
-                Endpoint = up.Permission.Endpoint,
-                IsPublic = up.Permission.IsPublic,
-                AssignedAt = up.AssignedAt,
-                ExpiresAt = up.ExpiresAt
-            })
-            .ToListAsync(cancellationToken);
+        return await _userPermRepo
+            .GetByAccountIdWithPermissionAsync(accountId, ct)
+            .ContinueWith(t => t.Result
+                .Where(up => up.ExpiresAt == null || up.ExpiresAt > now)
+                .Where(up => up.Permission.IsActive)
+                .Select(up => new UserPermissionResponse
+                {
+                    AccountId = up.AccountId,
+                    PermissionId = up.PermissionId,
+                    PermissionCode = up.Permission.PermissionCode,
+                    PermissionName = up.Permission.PermissionName,
+                    Method = up.Permission.Method,
+                    Endpoint = up.Permission.Endpoint,
+                    IsPublic = up.Permission.IsPublic,
+                    AssignedAt = up.AssignedAt,
+                    ExpiresAt = up.ExpiresAt
+                })
+                .ToList(), ct);
     }
 
-    private static void UpdateExistingAccount(Account account, LoginDto loginDto)
+    private static void UpdateExistingAccount(Account account, LoginRequest loginDto)
     {
         account.UpdatedAt = DateTime.UtcNow;
         account.Email = loginDto.Email;
         account.Username = loginDto.Email.Split('@')[0];
 
-        account.User!.UpdatedAt = DateTime.UtcNow;
-        account.User.Email = loginDto.Email;
+        if (account.User != null)
+        {
+            account.User.UpdatedAt = DateTime.UtcNow;
+            account.User.Email = loginDto.Email;
+        }
     }
 }

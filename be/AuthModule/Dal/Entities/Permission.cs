@@ -56,4 +56,5 @@ public class Permission
 
     // Navigation
     public ICollection<UserPermission> UserPermissions { get; set; } = new List<UserPermission>();
+    public ICollection<TokenPermission> TokenPermissions { get; set; } = new List<TokenPermission>();
 }

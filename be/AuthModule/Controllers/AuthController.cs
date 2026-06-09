@@ -1,5 +1,6 @@
 using AuthModule.Attributes;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -29,8 +30,8 @@ public class AuthController : ControllerBase
     [PermissionMeta(Public = PublicMode.Public, IsSystem = true,
         PermissionName = "Login",
         Description = "Authenticate via Microsoft Entra ID and receive a JWT access token with the account's assigned permissions.")]
-    public async Task<ActionResult<LoginResponseDto>> Login(
-        [FromBody] LoginDto loginDto,
+    public async Task<ActionResult<LoginResponse>> Login(
+        [FromBody] LoginRequest loginDto,
         CancellationToken cancellationToken)
     {
         try
@@ -53,7 +54,7 @@ public class AuthController : ControllerBase
                 userAccount.AccountId,
                 cancellationToken);
 
-            var response = new LoginResponseDto
+            var response = new LoginResponse
             {
                 UserId = userAccount.UserId,
                 AccountId = userAccount.AccountId,

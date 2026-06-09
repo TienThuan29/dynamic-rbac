@@ -1,5 +1,7 @@
 using AuthModule.Attributes;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,7 +28,7 @@ public class UserPermissionController : ControllerBase
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "List User Accounts",
         Description = "Retrieve a paginated list of all user accounts with optional search.")]
-    public async Task<ActionResult<PagedResult<UserAccountDto>>> GetAccounts(
+    public async Task<ActionResult<PagedResult<UserAccountResponse>>> GetAccounts(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? search = null,
@@ -39,11 +41,11 @@ public class UserPermissionController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("account/{accountId:guid}")]
+    [HttpGet("{accountId:guid}/permissions")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
-        PermissionName = "Get User Permissions",
-        Description = "Retrieve all permissions currently assigned to a specific user account.")]
-    public async Task<ActionResult<List<UserPermissionDetailDto>>> GetByAccount(
+        PermissionName = "List User Permissions",
+        Description = "Retrieve all direct permissions assigned to a specific account.")]
+    public async Task<ActionResult<List<UserPermissionDetailResponse>>> GetByAccount(
         Guid accountId,
         CancellationToken ct = default)
     {
@@ -51,60 +53,58 @@ public class UserPermissionController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPost("assign")]
+    [HttpPost("permissions")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
-        PermissionName = "Assign Permissions to User",
-        Description = "Assign one or more permissions to a user account, with optional expiry.")]
-    public async Task<ActionResult<List<UserPermissionDetailDto>>> Assign(
-        [FromBody] AssignUserPermissionDto dto,
+        PermissionName = "Assign User Permissions",
+        Description = "Assign one or more permissions directly to an account.")]
+    public async Task<ActionResult<List<UserPermissionDetailResponse>>> Assign(
+        [FromBody] AssignUserPermissionRequest dto,
         CancellationToken ct = default)
     {
-        if (dto.AccountId == Guid.Empty)
-            return BadRequest(new { message = "AccountId is required." });
-        if (dto.PermissionIds == null || dto.PermissionIds.Count == 0)
-            return BadRequest(new { message = "At least one PermissionId is required." });
-
-        var assignedBy = GetCurrentUserId() ?? Guid.Empty;
-        var result = await _userPermissionService.AssignPermissionAsync(dto, assignedBy, ct);
-        _logger.LogInformation(
-            "Permission(s) assigned to account {AccountId} by {AssignedBy}. Total: {Count}.",
-            dto.AccountId, assignedBy, result.Count);
-        return Ok(result);
-    }
-
-    [HttpPost("assign-by-group")]
-    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
-        PermissionName = "Assign Permission Group to User",
-        Description = "Assign all permissions belonging to a permission group to a user account.")]
-    public async Task<ActionResult<List<UserPermissionDetailDto>>> AssignByGroup(
-        [FromBody] AssignByGroupDto dto,
-        CancellationToken ct = default)
-    {
-        if (dto.AccountId == Guid.Empty)
-            return BadRequest(new { message = "AccountId is required." });
-        if (dto.PermissionGroupId == Guid.Empty)
-            return BadRequest(new { message = "PermissionGroupId is required." });
-
         try
         {
             var assignedBy = GetCurrentUserId() ?? Guid.Empty;
-            var result = await _userPermissionService.AssignByGroupAsync(dto, assignedBy, ct);
-            _logger.LogInformation(
-                "PermissionGroup {GroupId} applied to account {AccountId} by {AssignedBy}. " +
-                "Total permissions now: {Count}.",
-                dto.PermissionGroupId, dto.AccountId, assignedBy, result.Count);
+            var result = await _userPermissionService.AssignPermissionAsync(dto, assignedBy, ct);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
         {
             return NotFound(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
-    [HttpDelete("revoke/{accountId:guid}/{permissionId:guid}")]
+    [HttpPost("permissions/by-group")]
+    [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
+        PermissionName = "Assign Permissions By Group",
+        Description = "Assign all permissions from a permission group to an account at once.")]
+    public async Task<ActionResult<List<UserPermissionDetailResponse>>> AssignByGroup(
+        [FromBody] AssignByGroupRequest dto,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var assignedBy = GetCurrentUserId() ?? Guid.Empty;
+            var result = await _userPermissionService.AssignByGroupAsync(dto, assignedBy, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpDelete("{accountId:guid}/permissions/{permissionId:guid}")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Revoke User Permission",
-        Description = "Revoke a specific permission from a user account.")]
+        Description = "Revoke a specific permission from an account.")]
     public async Task<ActionResult> Revoke(
         Guid accountId,
         Guid permissionId,
@@ -112,33 +112,26 @@ public class UserPermissionController : ControllerBase
     {
         var revoked = await _userPermissionService.RevokePermissionAsync(accountId, permissionId, ct);
         if (!revoked)
-            return NotFound(new { message = "UserPermission not found." });
-
-        _logger.LogInformation(
-            "Permission {PermissionId} revoked from account {AccountId}.",
-            permissionId, accountId);
+            return NotFound(new { message = $"Permission {permissionId} not found on account {accountId}." });
         return NoContent();
     }
 
-    [HttpDelete("revoke-group/{accountId:guid}/{permissionGroupId:guid}")]
+    [HttpDelete("{accountId:guid}/permissions/by-group/{permissionGroupId:guid}")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
-        PermissionName = "Revoke Permission Group from User",
-        Description = "Revoke all permissions belonging to a group from a user account.")]
+        PermissionName = "Revoke All Permissions By Group",
+        Description = "Revoke all permissions that were assigned via a specific permission group from an account.")]
     public async Task<ActionResult> RevokeByGroup(
         Guid accountId,
         Guid permissionGroupId,
         CancellationToken ct = default)
     {
         var count = await _userPermissionService.RevokeAllByGroupAsync(accountId, permissionGroupId, ct);
-        _logger.LogInformation(
-            "{Count} permission(s) from group {GroupId} revoked from account {AccountId}.",
-            count, permissionGroupId, accountId);
-        return Ok(new { revokedCount = count });
+        return Ok(new { message = $"{count} permission(s) revoked." });
     }
 
     private Guid? GetCurrentUserId()
     {
-        var sub = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        return Guid.TryParse(sub, out var id) ? id : null;
+        var claim = User.FindFirst("userId")?.Value;
+        return Guid.TryParse(claim, out var id) ? id : null;
     }
 }

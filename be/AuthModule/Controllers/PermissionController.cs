@@ -1,5 +1,7 @@
 using AuthModule.Attributes;
-using AuthModule.DTOs;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,7 +28,7 @@ public class PermissionController : ControllerBase
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "List Permissions",
         Description = "Retrieve a paginated list of all permissions with optional filters.")]
-    public async Task<ActionResult<PagedResult<PermissionDto>>> GetAll(
+    public async Task<ActionResult<PagedResult<PermissionResponse>>> GetAll(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? search = null,
@@ -57,7 +59,7 @@ public class PermissionController : ControllerBase
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Get Permission",
         Description = "Retrieve the details of a single permission by its ID.")]
-    public async Task<ActionResult<PermissionDto>> GetById(Guid id, CancellationToken ct = default)
+    public async Task<ActionResult<PermissionResponse>> GetById(Guid id, CancellationToken ct = default)
     {
         var result = await _permissionService.GetByIdAsync(id, ct);
         if (result == null)
@@ -69,17 +71,15 @@ public class PermissionController : ControllerBase
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Update Permission",
         Description = "Update the name, description, code, or public flag of an existing permission.")]
-    public async Task<ActionResult<PermissionDto>> Update(
+    public async Task<ActionResult<PermissionResponse>> Update(
         Guid id,
-        [FromBody] UpdatePermissionDto dto,
+        [FromBody] UpdatePermissionRequest dto,
         CancellationToken ct = default)
     {
         try
         {
             var updatedBy = GetCurrentUserId();
             var result = await _permissionService.UpdateAsync(id, dto, updatedBy, ct);
-            _logger.LogInformation(
-                "Permission {Id} updated by {UpdatedBy}.", id, updatedBy);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -95,7 +95,7 @@ public class PermissionController : ControllerBase
     [HttpDelete("{id:guid}")]
     [PermissionMeta(Public = PublicMode.Private, IsSystem = true, AutoGenerateCode = true,
         PermissionName = "Delete Permission",
-        Description = "Permanently delete a permission record by its ID.")]
+        Description = "Permanently delete a permission and its associations from the system.")]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         try
@@ -103,7 +103,6 @@ public class PermissionController : ControllerBase
             var deleted = await _permissionService.DeleteAsync(id, ct);
             if (!deleted)
                 return NotFound(new { message = $"Permission {id} not found." });
-            _logger.LogInformation("Permission {Id} deleted.", id);
             return NoContent();
         }
         catch (InvalidOperationException ex)
@@ -114,7 +113,7 @@ public class PermissionController : ControllerBase
 
     private Guid? GetCurrentUserId()
     {
-        var sub = User.FindFirst("sub")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        return Guid.TryParse(sub, out var id) ? id : null;
+        var claim = User.FindFirst("userId")?.Value;
+        return Guid.TryParse(claim, out var id) ? id : null;
     }
 }

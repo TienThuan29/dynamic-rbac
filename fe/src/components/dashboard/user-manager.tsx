@@ -738,7 +738,7 @@ function UserPermissionDialog({
                 loading={loadingPerms}
                 resourceOptions={resourceOptions}
               />
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-4">
                 <label className="whitespace-nowrap text-sm text-muted-foreground">
                   Expiry for new assignments:
                 </label>
@@ -748,8 +748,6 @@ function UserPermissionDialog({
                   value={expiryDate}
                   onChange={(e) => onExpiryChange(e.target.value)}
                 />
-              </div>
-              <div className="flex justify-end">
                 <Button
                   variant="outline"
                   size="sm"

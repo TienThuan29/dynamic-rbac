@@ -188,6 +188,80 @@ namespace AuthModule.Dal.Migrations
                     b.ToTable("permission_groups");
                 });
 
+            modelBuilder.Entity("AuthModule.Dal.Entities.Token", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("account_id");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<bool>("IsRevoked")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_revoked");
+
+                    b.Property<string>("AccessToken")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("token");
+
+                    b.Property<string>("TokenType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("token_type");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId", "IsRevoked")
+                        .HasDatabaseName("IX_tokens_account_id_is_revoked");
+
+                    b.HasIndex("CreatedBy")
+                        .HasDatabaseName("IX_tokens_created_by");
+
+                    b.HasIndex("AccessToken")
+                        .IsUnique();
+
+                    b.ToTable("tokens");
+                });
+
+            modelBuilder.Entity("AuthModule.Dal.Entities.TokenPermission", b =>
+                {
+                    b.Property<Guid>("TokenId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("token_id");
+
+                    b.Property<Guid>("PermissionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("permission_id");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("granted_at");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.HasKey("TokenId", "PermissionId");
+
+                    b.HasIndex("PermissionId");
+
+                    b.ToTable("token_permissions");
+                });
+
             modelBuilder.Entity("AuthModule.Dal.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -293,6 +367,43 @@ namespace AuthModule.Dal.Migrations
                     b.ToTable("user_permissions");
                 });
 
+            modelBuilder.Entity("AuthModule.Dal.Entities.Token", b =>
+                {
+                    b.HasOne("AuthModule.Dal.Entities.Account", "Account")
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("AuthModule.Dal.Entities.Account", "CreatedByAccount")
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("CreatedByAccount");
+                });
+
+            modelBuilder.Entity("AuthModule.Dal.Entities.TokenPermission", b =>
+                {
+                    b.HasOne("AuthModule.Dal.Entities.Permission", "Permission")
+                        .WithMany("TokenPermissions")
+                        .HasForeignKey("PermissionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AuthModule.Dal.Entities.Token", "Token")
+                        .WithMany("TokenPermissions")
+                        .HasForeignKey("TokenId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Permission");
+
+                    b.Navigation("Token");
+                });
+
             modelBuilder.Entity("AuthModule.Dal.Entities.User", b =>
                 {
                     b.HasOne("AuthModule.Dal.Entities.Account", "Account")
@@ -332,7 +443,14 @@ namespace AuthModule.Dal.Migrations
 
             modelBuilder.Entity("AuthModule.Dal.Entities.Permission", b =>
                 {
+                    b.Navigation("TokenPermissions");
+
                     b.Navigation("UserPermissions");
+                });
+
+            modelBuilder.Entity("AuthModule.Dal.Entities.Token", b =>
+                {
+                    b.Navigation("TokenPermissions");
                 });
 #pragma warning restore 612, 618
         }

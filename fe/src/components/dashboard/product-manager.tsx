@@ -182,7 +182,7 @@ export function ProductManager({ session }: { session: LoginResponse | null }) {
     return () => {
       ignore = true
     }
-  }, [category, page, pageSize, refreshKey, search, session?.accessToken])
+  }, [category, page, pageSize, refreshKey, search, token])
 
   function openCreateDialog() {
     setEditingProduct(null)

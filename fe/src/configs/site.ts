@@ -1,8 +1,13 @@
 import type { LucideIcon } from "lucide-react"
-import { KeyRound, LayoutDashboard, LogIn, PackageCheck, Shield, Users } from "lucide-react"
+import { Fingerprint, KeyRound, LayoutDashboard, LogIn, PackageCheck, Shield, Users } from "lucide-react"
 
 export type SitePageId = "login" | "dashboard"
-export type DashboardSectionId = "products" | "users" | "permissions" | "permission-groups"
+export type DashboardSectionId =
+  | "products"
+  | "users"
+  | "permissions"
+  | "permission-groups"
+  | "tokens"
 
 export type SitePage = {
   id: SitePageId
@@ -67,6 +72,14 @@ const dashboardSections: DashboardSection[] = [
     module: "AuthModule",
     path: "/dashboard/permission-groups",
     icon: KeyRound,
+    requiresAuth: true,
+  },
+  {
+    id: "tokens",
+    label: "Tokens",
+    module: "AuthModule",
+    path: "/dashboard/tokens",
+    icon: Fingerprint,
     requiresAuth: true,
   },
 ]

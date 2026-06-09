@@ -1,4 +1,5 @@
 using AuthModule.Data;
+using AuthModule.Dal.Repositories;
 using AuthModule.Extensions;
 using AuthModule.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -15,8 +16,20 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddDbContext<AuthDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Repositories
+builder.Services.AddScoped<IAccountRepository, AccountRepository>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
+builder.Services.AddScoped<IUserPermissionRepository, UserPermissionRepository>();
+builder.Services.AddScoped<IPermissionGroupRepository, PermissionGroupRepository>();
+builder.Services.AddScoped<ITokenRepository, TokenRepository>();
+builder.Services.AddScoped<ITokenPermissionRepository, TokenPermissionRepository>();
+
+// Services
 builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IJwtUtil, JwtUtil>();
+builder.Services.AddScoped<ITokenService>(sp => sp.GetRequiredService<IJwtUtil>());
+builder.Services.AddScoped<ITokenAppService, TokenAppService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IPermissionGroupService, PermissionGroupService>();
 builder.Services.AddScoped<IUserPermissionService, UserPermissionService>();
@@ -38,7 +51,6 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false;
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {

@@ -121,6 +121,61 @@ export type PermissionGroupPayload = {
   description?: string | null
 }
 
+export type TokenPermission = {
+  permissionId: string
+  permissionCode?: string | null
+  permissionName?: string | null
+  method?: string | null
+  endpoint?: string | null
+  grantedAt: string
+  expiresAt?: string | null
+}
+
+export type ManagedToken = {
+  id: string
+  createdById: string
+  createdByEmail?: string | null
+  createdByUsername?: string | null
+  accountId?: string | null
+  accountEmail?: string | null
+  accountUsername?: string | null
+  tokenType: string
+  expiresAt?: string | null
+  isRevoked: boolean
+  permissions: TokenPermission[]
+}
+
+export type TokenPagedResult = {
+  items: ManagedToken[]
+  totalCount: number
+  page: number
+  pageSize: number
+  totalPages?: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+}
+
+export type CreateTokenPayload = {
+  accountId?: string | null
+  permissionIds: string[]
+  expiresInMinutes?: number | null
+}
+
+export type CreateTokenResponse = {
+  id: string
+  createdById: string
+  accountId?: string | null
+  tokenType: string
+  expiresAt?: string | null
+  rawJwt: string
+  permissions: string[]
+}
+
+export type RefreshTokenResponse = {
+  rawJwt: string
+  expiresAt?: string | null
+}
+
 export type LoginPayload = {
   email: string
   entraIdObjectId: string

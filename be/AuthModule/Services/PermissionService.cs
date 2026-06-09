@@ -1,103 +1,57 @@
-using AuthModule.Data;
-using AuthModule.DTOs;
+using AuthModule.Dal.Repositories;
+using AuthModule.DTOs.Common;
+using AuthModule.DTOs.Requests;
+using AuthModule.DTOs.Responses;
 using AuthModule.Mappers;
-using Microsoft.EntityFrameworkCore;
 
 namespace AuthModule.Services;
 
-
 public interface IPermissionService
 {
-    Task<PermissionDto?> GetByIdAsync(Guid id, CancellationToken ct = default);
-    Task<PagedResult<PermissionDto>> GetAllAsync(int page, int pageSize, string? search, string? method, bool? isSystem, bool? isActive, string? resource, CancellationToken ct = default);
+    Task<PermissionResponse?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<PagedResult<PermissionResponse>> GetAllAsync(int page, int pageSize, string? search, string? method, bool? isSystem, bool? isActive, string? resource, CancellationToken ct = default);
     Task<List<string>> GetDistinctResourcesAsync(CancellationToken ct = default);
-    Task<PermissionDto> UpdateAsync(Guid id, UpdatePermissionDto dto, Guid? updatedBy, CancellationToken ct = default);
+    Task<PermissionResponse> UpdateAsync(Guid id, UpdatePermissionRequest dto, Guid? updatedBy, CancellationToken ct = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct = default);
-    Task<List<PermissionDto>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
+    Task<List<PermissionResponse>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
 }
-
 
 public class PermissionService : IPermissionService
 {
-    private readonly AuthDbContext _db;
+    private readonly IPermissionRepository _permissionRepo;
 
-    public PermissionService(AuthDbContext db)
+    public PermissionService(IPermissionRepository permissionRepo)
     {
-        _db = db;
+        _permissionRepo = permissionRepo;
     }
 
-    public async Task<PermissionDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    public async Task<PermissionResponse?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        var entity = await _db.Permissions
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == id, ct);
-
-        return entity == null ? null : PermissionMapper.ToDto(entity);
+        var entity = await _permissionRepo.GetByIdAsync(id, ct);
+        return entity == null ? null : PermissionMapper.ToResponse(entity);
     }
 
-    public async Task<PagedResult<PermissionDto>> GetAllAsync(
+    public async Task<PagedResult<PermissionResponse>> GetAllAsync(
         int page, int pageSize, string? search,
         string? method, bool? isSystem, bool? isActive,
-        string? resource,
-        CancellationToken ct = default)
+        string? resource, CancellationToken ct = default)
     {
-        var query = _db.Permissions.AsNoTracking();
+        var (items, totalCount) = await _permissionRepo.GetAllAsync(
+            page, pageSize, search, method, isSystem, isActive, resource, ct);
 
-        if (!string.IsNullOrWhiteSpace(search))
+        return new PagedResult<PermissionResponse>
         {
-            var s = search.Trim().ToLower();
-            query = query.Where(p =>
-                (p.PermissionName != null && p.PermissionName.ToLower().Contains(s)) ||
-                (p.PermissionCode != null && p.PermissionCode.ToLower().Contains(s)) ||
-                (p.Endpoint != null && p.Endpoint.ToLower().Contains(s)) ||
-                (p.Description != null && p.Description.ToLower().Contains(s)));
-        }
-
-        if (!string.IsNullOrWhiteSpace(method))
-        {
-            query = query.Where(p => p.Method != null && p.Method.ToUpper() == method.ToUpper());
-        }
-
-        if (isSystem.HasValue)
-        {
-            query = query.Where(p => p.IsSystem == isSystem.Value);
-        }
-
-        if (isActive.HasValue)
-        {
-            query = query.Where(p => p.IsActive == isActive.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(resource))
-        {
-            var prefix = resource.ToLower();
-            query = query.Where(p =>
-                p.PermissionCode != null &&
-                p.PermissionCode.ToLower().StartsWith(prefix));
-        }
-
-        var totalCount = await query.CountAsync(ct);
-
-        var items = await query
-            .OrderByDescending(p => p.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(p => PermissionMapper.ToDto(p))
-            .ToListAsync(ct);
-
-        return new PagedResult<PermissionDto>
-        {
-            Items = items,
+            Items = items.Select(PermissionMapper.ToResponse).ToList(),
             TotalCount = totalCount,
             Page = page,
             PageSize = pageSize
         };
     }
 
-    public async Task<PermissionDto> UpdateAsync(
-        Guid id, UpdatePermissionDto dto, Guid? updatedBy, CancellationToken ct = default)
+    public async Task<PermissionResponse> UpdateAsync(
+        Guid id, UpdatePermissionRequest dto, Guid? updatedBy, CancellationToken ct = default)
     {
-        var entity = await _db.Permissions.FindAsync(new object[] { id }, ct)
+        var entity = await _permissionRepo.GetByIdWithTrackingAsync(id, ct)
             ?? throw new KeyNotFoundException($"Permission {id} not found.");
 
         if (entity.IsSystem)
@@ -122,43 +76,30 @@ public class PermissionService : IPermissionService
         entity.UpdatedBy = updatedBy;
         entity.UpdatedAt = DateTime.UtcNow;
 
-        await _db.SaveChangesAsync(ct);
-        return PermissionMapper.ToDto(entity);
+        await _permissionRepo.SaveChangesAsync(ct);
+        return PermissionMapper.ToResponse(entity);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
     {
-        var entity = await _db.Permissions.FindAsync(new object[] { id }, ct);
+        var entity = await _permissionRepo.GetByIdWithTrackingAsync(id, ct);
         if (entity == null) return false;
         if (entity.IsSystem)
             throw new InvalidOperationException("Cannot delete system permission.");
 
-        _db.Permissions.Remove(entity);
-        await _db.SaveChangesAsync(ct);
+        await _permissionRepo.RemoveAsync(entity, ct);
+        await _permissionRepo.SaveChangesAsync(ct);
         return true;
     }
 
-    public async Task<List<PermissionDto>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    public async Task<List<PermissionResponse>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
     {
-        var idList = ids.ToList();
-        return await _db.Permissions
-            .AsNoTracking()
-            .Where(p => idList.Contains(p.Id))
-            .Select(p => PermissionMapper.ToDto(p))
-            .ToListAsync(ct);
+        var entities = await _permissionRepo.GetByIdsAsync(ids, ct);
+        return entities.Select(PermissionMapper.ToResponse).ToList();
     }
 
     public async Task<List<string>> GetDistinctResourcesAsync(CancellationToken ct = default)
     {
-        return await _db.Permissions
-            .AsNoTracking()
-            .Where(p => p.PermissionCode != null)
-            .Select(p => p.PermissionCode!)
-            .ToListAsync(ct)
-            .ContinueWith(t => t.Result
-                .Select(code => code.Split(':')[0])
-                .Distinct()
-                .OrderBy(r => r)
-                .ToList());
+        return await _permissionRepo.GetDistinctResourcesAsync(ct);
     }
 }
