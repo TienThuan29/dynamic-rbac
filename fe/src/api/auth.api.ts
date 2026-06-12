@@ -7,7 +7,8 @@ import type {
 import { request } from "./api"
 
 export function login(payload: LoginPayload) {
-	return request<LoginResponse>("/login", {
+	// return request<LoginResponse>("/login", { // for product, fix latter
+	return request<LoginResponse>("/auth/login", {
 		method: "POST",
 		body: payload,
 	})

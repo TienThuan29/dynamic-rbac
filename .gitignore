@@ -35,3 +35,16 @@ docker-compose.override.yml
 swo-application-backend/
 
 deploy-output.env
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

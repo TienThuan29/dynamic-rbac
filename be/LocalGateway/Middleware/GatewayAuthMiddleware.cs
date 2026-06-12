@@ -53,7 +53,8 @@ public class GatewayAuthMiddleware
 
         // Gatekeeper itself and auth endpoints (login) are passthrough
         if (path.StartsWith("/api/gatekeeper", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase))
+            path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/login", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
