@@ -6,13 +6,23 @@ variable "location" {
   type = string
 }
 
-variable "pg_admin_password" {
-  type = string
+variable "name_prefix" {
+  description = "Name prefix for all resources, e.g. 'dynamic-rbac'"
+  type        = string
 }
 
-variable "apim_name" {
-  description = "Name of the API Management instance (Must be globally unique)"
+variable "environment" {
+  description = "Environment name, e.g. dev, prod"
   type        = string
+}
+
+variable "region" {
+  description = "Short region code, e.g. 'sea' for southeastasia"
+  type        = string
+}
+
+variable "pg_admin_password" {
+  type = string
 }
 
 variable "publisher_email" {

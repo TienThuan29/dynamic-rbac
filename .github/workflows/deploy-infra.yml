@@ -1,6 +1,11 @@
 name: Deploy Infrastructure
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - ".github/workflows/deploy-infra.yml"
   push:
     branches: [main]
     paths:
@@ -18,7 +23,7 @@ env:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply
+    name: Terraform ${{ github.event_name == 'pull_request' && 'Plan' || 'Plan & Apply' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -43,4 +48,5 @@ jobs:
         run: terraform plan -out=tfplan
 
       - name: Terraform Apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve tfplan

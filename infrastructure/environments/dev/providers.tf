@@ -7,7 +7,7 @@ terraform {
   }
 
   backend "azurerm" {
-    resource_group_name  = "vietnam-oneai-demo"
+    resource_group_name  = "rg-dynamic-rbac-dev"
     storage_account_name = "stgdynamicrbacdev"
     container_name       = "tfstate"
     key                  = "dev.terraform.tfstate"

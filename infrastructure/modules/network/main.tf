@@ -8,7 +8,7 @@ resource "azurerm_virtual_network" "vnet" {
 
 # create subnet for APIM
 resource "azurerm_subnet" "apim" {
-  name                 = "snet-apim"
+  name                 = "${var.name_prefix}-${var.environment}-snet-apim-${var.region}"
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = var.apim_subnet_prefix
@@ -16,7 +16,7 @@ resource "azurerm_subnet" "apim" {
 
 # Create NSG for APIM
 resource "azurerm_network_security_group" "apim_nsg" {
-  name                = "nsg-apim"
+  name                = "${var.name_prefix}-${var.environment}-nsg-apim-${var.region}"
   location            = var.location
   resource_group_name = var.resource_group_name
 
@@ -64,7 +64,7 @@ resource "azurerm_subnet_network_security_group_association" "apim_nsg_asso" {
 
 # create subnet for container app
 resource "azurerm_subnet" "apps" {
-  name                 = "snet-apps"
+  name                 = "${var.name_prefix}-${var.environment}-snet-apps-${var.region}"
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = var.app_subnet_prefix
@@ -80,7 +80,7 @@ resource "azurerm_subnet" "apps" {
 
 # create subnet for db
 resource "azurerm_subnet" "database" {
-  name = "snet-database"
+  name = "${var.name_prefix}-${var.environment}-snet-db-${var.region}"
   resource_group_name = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes = var.db_subnet_prefix

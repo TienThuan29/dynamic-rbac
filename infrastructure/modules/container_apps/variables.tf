@@ -8,8 +8,18 @@ variable "location" {
   type        = string
 }
 
+variable "name_prefix" {
+  description = "Name prefix for all resources"
+  type        = string
+}
+
 variable "environment" {
   description = "The environment name."
+  type        = string
+}
+
+variable "region" {
+  description = "Short region code, e.g. 'sea' for southeastasia"
   type        = string
 }
 
@@ -34,7 +44,26 @@ variable "registry_password" {
 }
 
 variable "postgres_connection_string" {
-  description = "Connection string for postgres database"
+  description = "Connection string for postgres database. Required if any app has needs_db = true."
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "apps" {
+  description = "Map of container apps to deploy. Key is used as container name and for_each key."
+  type = map(object({
+    name_suffix      = string
+    image            = string
+    min_replicas     = number
+    max_replicas     = number
+    cpu              = number
+    memory           = string
+    target_port      = optional(number)
+    external_enabled = bool
+    allow_insecure   = optional(bool, false)
+    needs_db         = optional(bool, false)
+    env_vars         = optional(map(string), {})
+    service_refs     = optional(map(string), {})
+  }))
 }

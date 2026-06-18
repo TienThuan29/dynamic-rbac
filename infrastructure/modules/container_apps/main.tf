@@ -1,84 +1,24 @@
 resource "azurerm_log_analytics_workspace" "logs" {
-  name                = "law-${var.environment}"
+  name                = "${var.name_prefix}-${var.environment}-law-${var.region}"
   location            = var.location
   resource_group_name = var.resource_group_name
   sku                 = "PerGB2018"
-  retention_in_days   = 30 # save logs for 30 days
+  retention_in_days   = 30
 }
 
-# init Managedd Environment
 resource "azurerm_container_app_environment" "env" {
-  name                       = "cae-${var.environment}"
-  location                   = var.location
-  resource_group_name        = var.resource_group_name
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
-
-  # connect this environment to delegated subnet
+  name                           = "${var.name_prefix}-${var.environment}-cae-${var.region}"
+  location                       = var.location
+  resource_group_name            = var.resource_group_name
+  log_analytics_workspace_id     = azurerm_log_analytics_workspace.logs.id
   infrastructure_subnet_id       = var.app_subnet_id
-  internal_load_balancer_enabled = false # set 'false' to frontend can access to public IP
+  internal_load_balancer_enabled = false
 }
 
-# init module(s)
-resource "azurerm_container_app" "auth_service" {
-  name                         = "ca-auth-${var.environment}"
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  resource_group_name          = var.resource_group_name
-  revision_mode                = "Single"
+resource "azurerm_container_app" "apps" {
+  for_each = var.apps
 
-  # setup to pull image from ACR
-  registry {
-    server               = var.registry_login_server
-    username             = var.registry_username
-    password_secret_name = "registry-password"
-  }
-
-  # Quản lý kho Secret an toàn (Không in ra Log)
-  secret {
-    name  = "registry-password"
-    value = var.registry_password
-  }
-
-  secret {
-    name  = "db-connection-string"
-    value = var.postgres_connection_string
-  }
-
-  template {
-    min_replicas = 0 # auto scale to 0 to save cost
-    max_replicas = 3 # auto scale up to 3 instances when needed
-
-    container {
-      name   = "auth-module"
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = 0.5
-      memory = "1.0Gi" # 1GB RAM
-
-      # Env for container
-      env {
-        name  = "ASPNETCORE_ENVIRONMENT"
-        value = "Production"
-      }
-
-      env {
-        name        = "ConnectionStrings__DefaultConnection"
-        secret_name = "db-connection-string"
-      }
-    }
-  }
-
-  ingress {
-    allow_insecure_connections = true # allow http traffic (not recommended for production, use https in real case)
-    external_enabled           = false
-    target_port                = 8080
-    traffic_weight {
-      percentage      = 100
-      latest_revision = true
-    }
-  }
-}
-
-resource "azurerm_container_app" "main_service" {
-  name                         = "ca-main-${var.environment}"
+  name                         = "${var.name_prefix}-${var.environment}-ca-${each.value.name_suffix}-${var.region}"
   container_app_environment_id = azurerm_container_app_environment.env.id
   resource_group_name          = var.resource_group_name
   revision_mode                = "Single"
@@ -94,88 +34,58 @@ resource "azurerm_container_app" "main_service" {
     value = var.registry_password
   }
 
-  secret {
-    name  = "db-connection-string"
-    value = var.postgres_connection_string
+  # Only inject DB secret for apps that need it
+  dynamic "secret" {
+    for_each = each.value.needs_db ? [1] : []
+    content {
+      name  = "db-connection-string"
+      value = var.postgres_connection_string
+    }
   }
 
   template {
-    min_replicas = 1 # Service chính nên lúc nào cũng để 1 bản sao chờ sẵn cho nhanh
-    max_replicas = 3
+    min_replicas = each.value.min_replicas
+    max_replicas = each.value.max_replicas
 
     container {
-      name   = "main-module"
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = 0.5 
-      memory = "1.0Gi"
+      name   = each.key
+      image  = each.value.image
+      cpu    = each.value.cpu
+      memory = each.value.memory
 
-      env {
-        name  = "ASPNETCORE_ENVIRONMENT"
-        value = "Production"
+      dynamic "env" {
+        for_each = each.value.env_vars
+        content {
+          name  = env.key
+          value = env.value
+        }
       }
 
-      env {
-        name        = "ConnectionStrings__DefaultConnection"
-        secret_name = "db-connection-string"
+      # DB connection string referenced via secret
+      dynamic "env" {
+        for_each = each.value.needs_db ? { "ConnectionStrings__DefaultConnection" = "db-connection-string" } : {}
+        content {
+          name        = env.key
+          secret_name = env.value
+        }
       }
-      
-      # Ví dụ: Gọi Auth Module từ Main Module thông qua FQDN nội bộ
-      env {
-        name  = "AUTH_SERVICE_URL"
-        value = "https://${azurerm_container_app.auth_service.ingress[0].fqdn}" 
+
+      # Cross-app env vars: resolves app key -> internal FQDN at plan time
+      # Terraform dependency graph ensures referenced app is created first
+      dynamic "env" {
+        for_each = each.value.service_refs
+        content {
+          name  = env.key
+          value = "https://${azurerm_container_app.apps[env.value].ingress[0].fqdn}"
+        }
       }
     }
   }
 
   ingress {
-    allow_insecure_connections = false
-    external_enabled           = false # Cũng ẩn bên trong mạng nội bộ
-    target_port                = 8080
-    traffic_weight {
-      percentage      = 100
-      latest_revision = true
-    }
-  }
-}
-
-resource "azurerm_container_app" "frontend" {
-  name                         = "ca-frontend-${var.environment}"
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  resource_group_name          = var.resource_group_name
-  revision_mode                = "Single"
-
-  registry {
-    server               = var.registry_login_server
-    username             = var.registry_username
-    password_secret_name = "registry-password"
-  }
-
-  secret {
-    name  = "registry-password"
-    value = var.registry_password
-  }
-
-  template {
-    min_replicas = 1
-    max_replicas = 5
-
-    container {
-      name   = "frontend"
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = 0.25
-      memory = "0.5Gi"
-
-      env {
-        name  = "NODE_ENV"
-        value = "production"
-      }
-    }
-  }
-
-  ingress {
-    allow_insecure_connections = false
-    external_enabled           = true # React app needs to be publicly accessible
-    target_port                = 8080
+    allow_insecure_connections = each.value.allow_insecure
+    external_enabled           = each.value.external_enabled
+    target_port                = each.value.target_port
     traffic_weight {
       percentage      = 100
       latest_revision = true

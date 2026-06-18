@@ -6,7 +6,7 @@ resource "azurerm_private_dns_zone" "postgres" {
 
 # link this private dns to vnet
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "link-postgres-dns-to-vnet"
+  name                  = "${var.name_prefix}-${var.environment}-link-pgdns-${var.region}"
   resource_group_name   = var.resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.postgres.name
   virtual_network_id    = var.vnet_id

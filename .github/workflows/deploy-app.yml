@@ -11,17 +11,26 @@ on:
   workflow_dispatch:
 
 env:
-  RESOURCE_GROUP: vietnam-oneai-demo
   ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
 
 jobs:
-  build-and-push:
-    name: Build & Push Docker Images
+  prepare:
+    name: Prepare
     runs-on: ubuntu-latest
-
+    outputs:
+      image_tag: ${{ steps.tag.outputs.IMAGE_TAG }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - id: tag
+        run: echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+  build-auth:
+    name: Build AuthModule
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Azure Login
         uses: azure/login@v2
@@ -37,50 +46,84 @@ jobs:
       - name: Login to ACR
         run: az acr login --name $(echo ${{ env.ACR_LOGIN_SERVER }} | cut -d. -f1)
 
-      - name: Set image tag
-        id: tag
-        run: echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Build & Push AuthModule
+      - name: Build & Push
         run: |
           docker build \
             --platform linux/amd64 \
-            -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/authmodule:${{ steps.tag.outputs.IMAGE_TAG }} \
+            -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/authmodule:${{ needs.prepare.outputs.image_tag }} \
             -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/authmodule:latest \
             -f ./be/AuthModule/Dockerfile \
             ./be/AuthModule
           docker push ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/authmodule --all-tags
 
-      - name: Build & Push MainModule
+  build-main:
+    name: Build MainModule
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Login to ACR
+        run: az acr login --name $(echo ${{ env.ACR_LOGIN_SERVER }} | cut -d. -f1)
+
+      - name: Build & Push
         run: |
           docker build \
             --platform linux/amd64 \
-            -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/mainmodule:${{ steps.tag.outputs.IMAGE_TAG }} \
+            -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/mainmodule:${{ needs.prepare.outputs.image_tag }} \
             -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/mainmodule:latest \
             -f ./be/MainModule/Dockerfile \
             ./be/MainModule
           docker push ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/mainmodule --all-tags
 
-      - name: Build & Push Frontend
+  build-frontend:
+    name: Build Frontend
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Login to ACR
+        run: az acr login --name $(echo ${{ env.ACR_LOGIN_SERVER }} | cut -d. -f1)
+
+      - name: Build & Push
         run: |
           docker build \
             --platform linux/amd64 \
             --build-arg VITE_AUTH_API_BASE_URL=${{ secrets.VITE_AUTH_API_BASE_URL }} \
             --build-arg VITE_MAIN_API_BASE_URL=${{ secrets.VITE_MAIN_API_BASE_URL }} \
-            -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/frontend:${{ steps.tag.outputs.IMAGE_TAG }} \
+            -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/frontend:${{ needs.prepare.outputs.image_tag }} \
             -t ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/frontend:latest \
             -f ./fe/Dockerfile \
             ./fe
           docker push ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/frontend --all-tags
 
-    outputs:
-      image_tag: ${{ steps.tag.outputs.IMAGE_TAG }}
-
   deploy:
     name: Deploy to Container Apps
+    needs: [prepare, build-auth, build-main, build-frontend]
     runs-on: ubuntu-latest
-    needs: build-and-push
-
     steps:
       - name: Azure Login
         uses: azure/login@v2
@@ -98,18 +141,18 @@ jobs:
         with:
           resourceGroup: ${{ env.RESOURCE_GROUP }}
           containerAppName: ca-auth-dev
-          imageToDeploy: ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/authmodule:${{ needs.build-and-push.outputs.image_tag }}
+          imageToDeploy: ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/authmodule:${{ needs.prepare.outputs.image_tag }}
 
       - name: Deploy MainModule
         uses: azure/container-apps-deploy-action@v1
         with:
           resourceGroup: ${{ env.RESOURCE_GROUP }}
           containerAppName: ca-main-dev
-          imageToDeploy: ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/mainmodule:${{ needs.build-and-push.outputs.image_tag }}
+          imageToDeploy: ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/mainmodule:${{ needs.prepare.outputs.image_tag }}
 
       - name: Deploy Frontend
         uses: azure/container-apps-deploy-action@v1
         with:
           resourceGroup: ${{ env.RESOURCE_GROUP }}
           containerAppName: ca-frontend-dev
-          imageToDeploy: ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/frontend:${{ needs.build-and-push.outputs.image_tag }}
+          imageToDeploy: ${{ env.ACR_LOGIN_SERVER }}/dynamic-rbac/frontend:${{ needs.prepare.outputs.image_tag }}

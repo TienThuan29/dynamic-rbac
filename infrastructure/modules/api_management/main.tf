@@ -7,7 +7,7 @@ resource "azurerm_api_management" "apim" {
   sku_name            = var.sku_name
 
   virtual_network_type = "External"
-  
+
   virtual_network_configuration {
     subnet_id = var.apim_subnet_id
   }
@@ -17,88 +17,64 @@ resource "azurerm_api_management" "apim" {
   }
 }
 
-resource "azurerm_api_management_named_value" "jwt_secret" {
-  name                = "JWT_SECRET"
+resource "azurerm_api_management_named_value" "values" {
+  for_each = var.named_values
+
+  name                = each.key
+  display_name        = each.value.display_name
   api_management_name = azurerm_api_management.apim.name
   resource_group_name = var.resource_group_name
-  display_name        = "JWT_SECRET"
-  value               = var.jwt_secret_b64
-  secret              = true
+  value               = each.value.value
+  secret              = each.value.is_secret
 }
 
-resource "azurerm_api_management_api" "auth_api" {
-  name                = "api-service-1"
-  resource_group_name = var.resource_group_name
-  api_management_name = azurerm_api_management.apim.name
-  revision            = "1"
-  display_name        = "AuthModule"
-  path                = "auth-api"
-  protocols           = ["https"]
-  service_url         = var.auth_api_url
+resource "azurerm_api_management_api" "apis" {
+  for_each = var.apis
+
+  name                  = "${var.name_prefix}-${var.environment}-api-${each.key}-${var.region}"
+  resource_group_name   = var.resource_group_name
+  api_management_name   = azurerm_api_management.apim.name
+  revision              = "1"
+  display_name          = each.value.display_name
+  path                  = each.value.path
+  protocols             = ["https"]
+  service_url           = each.value.backend_url
   subscription_required = false
 }
 
-resource "azurerm_api_management_api_policy" "auth_api_policy" {
-  api_name            = azurerm_api_management_api.auth_api.name
-  api_management_name = azurerm_api_management.apim.name
-  resource_group_name = var.resource_group_name
-  xml_content         = templatefile("${path.module}/auth_policy.xml", {
-    auth_api_url = var.auth_api_url
-  })
-}
+resource "azurerm_api_management_api_policy" "policies" {
+  for_each = { for k, v in var.apis : k => v if v.policy_file != null }
 
-resource "azurerm_api_management_api" "main_api" {
-  name                = "api-service-2"
-  resource_group_name = var.resource_group_name
-  api_management_name = azurerm_api_management.apim.name
-  revision            = "1"
-  display_name        = "MainModule"
-  path                = "products-api"
-  protocols           = ["https"]
-  service_url         = var.main_api_url
-  subscription_required = false
-}
-
-resource "azurerm_api_management_api_policy" "main_api_policy" {
-  api_name            = azurerm_api_management_api.main_api.name
+  api_name            = azurerm_api_management_api.apis[each.key].name
   api_management_name = azurerm_api_management.apim.name
   resource_group_name = var.resource_group_name
-  xml_content         = templatefile("${path.module}/main_policy.xml", {
-    auth_api_url = var.auth_api_url
-  })
+  xml_content         = templatefile(each.value.policy_file, each.value.policy_vars)
 }
 
 locals {
   methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
-}
 
-resource "azurerm_api_management_api_operation" "auth_catchall" {
-  for_each            = toset(local.methods)
-  operation_id        = "auth-catchall-${lower(each.key)}"
-  api_name            = azurerm_api_management_api.auth_api.name
-  api_management_name = azurerm_api_management.apim.name
-  resource_group_name = var.resource_group_name
-  display_name        = "Catch All ${each.key}"
-  method              = each.key
-  url_template        = "/{*path}"
-  
-  template_parameter {
-    name     = "path"
-    type     = "string"
-    required = true
+  # Cartesian product of api keys × HTTP methods for catch-all operations
+  api_operations = {
+    for combo in setproduct(keys(var.apis), local.methods) :
+    "${combo[0]}-${lower(combo[1])}" => {
+      api_key = combo[0]
+      method  = combo[1]
+    }
   }
 }
 
-resource "azurerm_api_management_api_operation" "main_catchall" {
-  for_each            = toset(local.methods)
-  operation_id        = "main-catchall-${lower(each.key)}"
-  api_name            = azurerm_api_management_api.main_api.name
+resource "azurerm_api_management_api_operation" "catchall" {
+  for_each = local.api_operations
+
+  operation_id        = "${each.key}-catchall"
+  api_name            = azurerm_api_management_api.apis[each.value.api_key].name
   api_management_name = azurerm_api_management.apim.name
   resource_group_name = var.resource_group_name
-  display_name        = "Catch All ${each.key}"
-  method              = each.key
+  display_name        = "Catch All ${each.value.method}"
+  method              = each.value.method
   url_template        = "/{*path}"
-  
+
   template_parameter {
     name     = "path"
     type     = "string"
